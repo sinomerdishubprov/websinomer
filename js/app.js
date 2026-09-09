@@ -715,13 +715,24 @@ async function renderDataMaster(content) {
       <div class="field"><label>Email</label><input id="eEmail" value="${p.Email}"></div>
       <div class="field"><label>Role</label><select id="eRole">${roles.map(r => `<option ${r === p.Role ? 'selected' : ''}>${r}</option>`).join('')}</select></div>
       <div class="field"><label>Kode Bidang</label><input id="eBidang" value="${p.BidangKode || ''}"></div>
-      <div style="display:flex;gap:.6rem;"><button class="btn btn-primary" id="eSaveBtn">Simpan</button><button class="btn btn-outline" onclick="closeModal()">Batal</button></div>`);
+      <div style="display:flex;gap:.6rem;"><button class="btn btn-primary" id="eSaveBtn">Simpan</button><button class="btn btn-outline" onclick="closeModal()">Batal</button></div>
+      <hr style="margin:1.25rem 0;border:none;border-top:1px solid var(--border-subtle);">
+      <div class="field-hint" style="margin-bottom:.5rem;">Lupa/hilang akses password? Reset ke password baru di bawah ini (pegawai wajib diberi tahu manual oleh Admin).</div>
+      <div class="field"><label>Password Baru (opsional, min. 6 karakter — kosongkan untuk pakai default "dishub123")</label><input type="text" id="eNewPass" placeholder="dishub123"></div>
+      <button class="btn btn-outline btn-block" id="eResetPassBtn">🔑 Reset Password Akun Ini</button>`);
     document.getElementById('eSaveBtn').addEventListener('click', async () => {
       await apiPost('updateMasterPegawai', {
         originalEmail: p.Email, nama: document.getElementById('eNama').value, nip: document.getElementById('eNip').value,
         email: document.getElementById('eEmail').value, role: document.getElementById('eRole').value, bidangKode: document.getElementById('eBidang').value
       });
       showToast('Data pegawai berhasil diperbarui.'); closeModal(); router();
+    });
+    document.getElementById('eResetPassBtn').addEventListener('click', async () => {
+      if (!confirm('Reset password akun ' + p.Nama + '?')) return;
+      const newPassword = document.getElementById('eNewPass').value;
+      const res = await apiPost('adminResetPassword', { email: p.Email, newPassword });
+      closeModal();
+      alert('Password akun ' + p.Nama + ' (' + p.Email + ') berhasil direset menjadi:\n\n' + res.newPassword + '\n\nSegera beri tahu pemilik akun secara manual, dan minta mereka menggantinya lagi lewat menu "Ganti Password".');
     });
   };
 
