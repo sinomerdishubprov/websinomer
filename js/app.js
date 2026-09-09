@@ -389,6 +389,7 @@ async function renderDetail(content, noNota) {
     <div><a href="#/nota-saya" style="font-size:12.5px;">← Kembali</a>
       <h2 class="section-title" style="margin:.2rem 0 0;">${n.NoNota}</h2></div>
     <div>${statusBadge(n.Status)}
+      <button class="btn btn-outline btn-sm" id="lihatPdfBtn">👁️ Lihat PDF</button>
       <button class="btn btn-outline btn-sm" id="unduhPdfBtn">⬇️ Unduh PDF</button></div>
   </div>
 
@@ -450,6 +451,17 @@ async function renderDetail(content, noNota) {
       </div>
     </div>
   </div>`;
+
+  document.getElementById('lihatPdfBtn').addEventListener('click', async () => {
+    const btn = document.getElementById('lihatPdfBtn');
+    btn.disabled = true; btn.textContent = 'Memuat...';
+    try {
+      const pdf = await apiGet('getPdf', { noNota });
+      const blobUrl = base64ToBlobUrl(pdf.base64, 'application/pdf');
+      openPdfModal(blobUrl, n.NoNota);
+    } catch (err) { /* toast sudah tampil dari apiGet */ }
+    btn.disabled = false; btn.textContent = '👁️ Lihat PDF';
+  });
 
   document.getElementById('unduhPdfBtn').addEventListener('click', async () => {
     try {
@@ -629,6 +641,35 @@ function openModal(innerHtml) {
 }
 function closeModal() {
   document.getElementById('modalBackdrop')?.remove();
+}
+
+// Konversi base64 -> Object URL blob, dipakai untuk preview PDF tanpa unduh paksa.
+function base64ToBlobUrl(base64, mimeType) {
+  const byteChars = atob(base64);
+  const byteNumbers = new Array(byteChars.length);
+  for (let i = 0; i < byteChars.length; i++) byteNumbers[i] = byteChars.charCodeAt(i);
+  const byteArray = new Uint8Array(byteNumbers);
+  const blob = new Blob([byteArray], { type: mimeType });
+  return URL.createObjectURL(blob);
+}
+
+// Modal lebar khusus untuk melihat PDF langsung di halaman (embed iframe).
+function openPdfModal(blobUrl, noNota) {
+  const wrap = document.createElement('div');
+  wrap.className = 'modal-backdrop';
+  wrap.id = 'pdfModalBackdrop';
+  wrap.innerHTML = `
+    <div class="modal-box" style="max-width:920px;width:95vw;height:90vh;padding:0;display:flex;flex-direction:column;">
+      <div class="flex-between" style="padding:.75rem 1rem;border-bottom:1px solid var(--border-subtle);flex-shrink:0;">
+        <b>${noNota}.pdf</b>
+        <button class="btn btn-outline btn-sm" id="closePdfModalBtn">✕ Tutup</button>
+      </div>
+      <iframe src="${blobUrl}" style="flex:1;border:none;width:100%;"></iframe>
+    </div>`;
+  const cleanup = () => { URL.revokeObjectURL(blobUrl); wrap.remove(); };
+  wrap.addEventListener('click', (e) => { if (e.target === wrap) cleanup(); });
+  document.body.appendChild(wrap);
+  document.getElementById('closePdfModalBtn').addEventListener('click', cleanup);
 }
 
 // ------------------------------------------------------------
