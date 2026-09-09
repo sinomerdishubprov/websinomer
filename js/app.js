@@ -41,6 +41,15 @@ function initials(nama) {
   return (nama || '?').split(' ').map(w => w[0]).slice(0, 2).join('').toUpperCase();
 }
 
+// Tombol mata — toggle tampil/sembunyi teks password. Dipakai di semua
+// field password (login, ganti password, reset password admin).
+window.togglePasswordVisibility = function (btn) {
+  const input = btn.previousElementSibling;
+  if (!input) return;
+  if (input.type === 'password') { input.type = 'text'; btn.textContent = '🙈'; }
+  else { input.type = 'password'; btn.textContent = '👁️'; }
+};
+
 function statusBadge(status) {
   const map = { Diajukan: 'badge-diajukan', Diketahui: 'badge-diketahui', Disetujui: 'badge-disetujui', Diproses: 'badge-diproses', Selesai: 'badge-selesai', Ditolak: 'badge-ditolak' };
   return `<span class="badge ${map[status] || ''}">${status}</span>`;
@@ -79,7 +88,7 @@ async function router() {
   highlightActiveNav();
 }
 window.addEventListener('hashchange', router);
-window.addEventListener('DOMContentLoaded', router);
+window.addEventListener('DOMContentLoaded', () => { restoreSession(); router(); });
 
 function highlightActiveNav() {
   document.querySelectorAll('.nav-item').forEach(a => a.classList.toggle('active', a.getAttribute('href') === location.hash));
@@ -102,7 +111,10 @@ function renderLogin() {
         </div>
         <div class="field" style="text-align:left;">
           <label>Kata Sandi</label>
-          <input type="password" id="loginPassword" required>
+          <div class="password-wrap">
+            <input type="password" id="loginPassword" required>
+            <button type="button" class="password-toggle" onclick="togglePasswordVisibility(this)" aria-label="Lihat kata sandi">👁️</button>
+          </div>
         </div>
         <button class="btn btn-primary btn-block" type="submit" id="loginBtn">Masuk</button>
       </form>
@@ -572,9 +584,15 @@ async function renderGantiPassword(content) {
   content.innerHTML = `
   <h2 class="section-title">🔑 Ganti Kata Sandi</h2>
   <div class="card" style="max-width:480px;">
-    <div class="field"><label>Kata Sandi Lama</label><input type="password" id="oldPass"></div>
-    <div class="field"><label>Kata Sandi Baru</label><input type="password" id="newPass" placeholder="Minimal 6 karakter"></div>
-    <div class="field"><label>Ulangi Kata Sandi Baru</label><input type="password" id="confirmPass"></div>
+    <div class="field"><label>Kata Sandi Lama</label>
+      <div class="password-wrap"><input type="password" id="oldPass"><button type="button" class="password-toggle" onclick="togglePasswordVisibility(this)">👁️</button></div>
+    </div>
+    <div class="field"><label>Kata Sandi Baru</label>
+      <div class="password-wrap"><input type="password" id="newPass" placeholder="Minimal 6 karakter"><button type="button" class="password-toggle" onclick="togglePasswordVisibility(this)">👁️</button></div>
+    </div>
+    <div class="field"><label>Ulangi Kata Sandi Baru</label>
+      <div class="password-wrap"><input type="password" id="confirmPass"><button type="button" class="password-toggle" onclick="togglePasswordVisibility(this)">👁️</button></div>
+    </div>
     <button class="btn btn-primary" id="btnGantiPass">Simpan Kata Sandi Baru</button>
   </div>`;
 
