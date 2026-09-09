@@ -227,6 +227,7 @@ function renderNotaTable(list) {
 async function renderBuatNota(content) {
   const master = await apiGet('getMasterData', { jenis: 'semua' });
   const barangList = master.barang;
+  const SATUAN_OPTIONS = ['Pcs', 'Unit', 'Buah', 'Rim', 'Lembar', 'Roll', 'Kotak', 'Set', 'Paket', 'Meter', 'Liter', 'Kg', 'Botol', 'Galon'];
 
   content.innerHTML = `
   <h2 class="section-title">➕ Ajukan Nota Permintaan Barang</h2>
@@ -237,7 +238,6 @@ async function renderBuatNota(content) {
       </div>
       <div class="field"><label>Tanggal Pengajuan</label><input type="text" value="${new Date().toLocaleDateString('id-ID')}" disabled></div>
     </div>
-    <div class="field"><label>Tujuan / Keperluan</label><textarea id="fTujuan" placeholder="Jelaskan kebutuhan operasional..."></textarea></div>
 
     <div class="flex-between"><label style="font-weight:600;">Daftar Barang</label><button type="button" class="btn btn-outline btn-sm" id="addItemBtn">➕ Tambah Barang</button></div>
     <div id="itemsWrap"></div>
@@ -250,6 +250,13 @@ async function renderBuatNota(content) {
 
   const itemsWrap = document.getElementById('itemsWrap');
   let itemCount = 0;
+
+  function satuanOptionsHtml(selected) {
+    const inList = SATUAN_OPTIONS.includes(selected);
+    return `<option value="" ${!selected ? 'selected' : ''}>-- pilih --</option>`
+      + SATUAN_OPTIONS.map(s => `<option value="${s}" ${s === selected ? 'selected' : ''}>${s}</option>`).join('')
+      + `<option value="__lainnya__" ${selected && !inList ? 'selected' : ''}>Lainnya (ketik manual)</option>`;
+  }
 
   function addItemRow() {
     itemCount++;
@@ -268,32 +275,47 @@ async function renderBuatNota(content) {
         <input class="itemBarangManual" style="display:none;margin-top:.4rem;" placeholder="Nama barang lainnya">
       </div>
       <div class="field" style="margin-bottom:0;"><label>Jumlah</label><input type="number" class="itemJumlah" min="1" value="1"></div>
-      <div class="field" style="margin-bottom:0;"><label>Satuan</label><input class="itemSatuan" placeholder="pcs/rim/dll"></div>
+      <div class="field" style="margin-bottom:0;"><label>Satuan</label>
+        <select class="itemSatuan" onchange="toggleSatuanManual(this)">${satuanOptionsHtml('')}</select>
+        <input class="itemSatuanManual" style="display:none;margin-top:.4rem;" placeholder="Ketik satuan lain">
+      </div>
       <button type="button" class="btn btn-outline btn-sm" onclick="document.getElementById('${rowId}').remove()">✕</button>`;
     itemsWrap.appendChild(row);
   }
+
+  window.toggleSatuanManual = function (sel) {
+    const row = sel.closest('.grid-2');
+    row.querySelector('.itemSatuanManual').style.display = sel.value === '__lainnya__' ? 'block' : 'none';
+  };
+
   window.autoFillSatuan = function (sel) {
     const row = sel.closest('.grid-2');
     const manual = row.querySelector('.itemBarangManual');
-    if (sel.value === '__lainnya__') { manual.style.display = 'block'; return; }
-    manual.style.display = 'none';
-    const opt = sel.selectedOptions[0];
-    row.querySelector('.itemSatuan').value = opt.dataset.satuan || '';
+    manual.style.display = sel.value === '__lainnya__' ? 'block' : 'none';
+    // Catatan: Satuan SENGAJA tidak diisi otomatis — pemohon tetap memilih
+    // sendiri satuan dari dropdown, sama seperti memilih Nama Barang.
   };
+
   document.getElementById('addItemBtn').addEventListener('click', addItemRow);
   addItemRow();
 
   document.getElementById('submitNotaBtn').addEventListener('click', async () => {
     const items = [];
+    let satuanKosong = false;
     itemsWrap.querySelectorAll('.grid-2').forEach(row => {
       const sel = row.querySelector('.itemBarang');
       const namaBarang = sel.value === '__lainnya__' ? row.querySelector('.itemBarangManual').value : sel.value;
       const jumlah = row.querySelector('.itemJumlah').value;
-      const satuan = row.querySelector('.itemSatuan').value;
+      const satuanSel = row.querySelector('.itemSatuan');
+      const satuan = satuanSel.value === '__lainnya__' ? row.querySelector('.itemSatuanManual').value : satuanSel.value;
       const kodeBMN = sel.selectedOptions[0] ? sel.selectedOptions[0].dataset.kode : '';
-      if (namaBarang && jumlah) items.push({ namaBarang, jumlah: Number(jumlah), satuan, kodeBMN });
+      if (namaBarang && jumlah) {
+        if (!satuan) satuanKosong = true;
+        items.push({ namaBarang, jumlah: Number(jumlah), satuan, kodeBMN });
+      }
     });
     if (!items.length) return showToast('Tambahkan minimal satu barang.', 'error');
+    if (satuanKosong) return showToast('Pilih satuan untuk setiap barang.', 'error');
 
     const btn = document.getElementById('submitNotaBtn');
     btn.disabled = true; btn.textContent = 'Mengirim...';
@@ -301,7 +323,6 @@ async function renderBuatNota(content) {
       const res = await apiPost('createNota', {
         pemohonEmail: currentUser.email,
         bidangKode: document.getElementById('fBidang').value,
-        tujuan: document.getElementById('fTujuan').value,
         items
       });
       showToast(res.message);
@@ -365,7 +386,6 @@ async function renderDetail(content, noNota) {
         <table class="data-table" style="border:none;">
           <tr><td class="text-muted">Bidang / Unit Kerja</td><td><b>${n.BidangNama}</b></td></tr>
           <tr><td class="text-muted">Pejabat Pemohon</td><td><b>${n.PemohonNama}</b> (NIP. ${n.PemohonNIP})</td></tr>
-          <tr><td class="text-muted">Tujuan / Keperluan</td><td>${n.Tujuan || '-'}</td></tr>
           <tr><td class="text-muted">Tanggal Pengajuan</td><td>${n.Tanggal}</td></tr>
         </table>
       </div>
