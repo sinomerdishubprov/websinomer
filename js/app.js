@@ -34,6 +34,8 @@ const NAV_ITEMS = {
     ['#/laporan', '📊 Laporan & Rekap']
   ]
 };
+// Menu "Ganti Password" tersedia untuk SEMUA role, ditambahkan otomatis di akhir.
+Object.keys(NAV_ITEMS).forEach(role => NAV_ITEMS[role].push(['#/ganti-password', '🔑 Ganti Password']));
 
 function initials(nama) {
   return (nama || '?').split(' ').map(w => w[0]).slice(0, 2).join('').toUpperCase();
@@ -68,6 +70,7 @@ async function router() {
     else if (hash.startsWith('#/detail/')) await renderDetail(content, decodeURIComponent(hash.split('#/detail/')[1]));
     else if (hash === '#/laporan') await renderLaporan(content);
     else if (hash === '#/data-master') await renderDataMaster(content);
+    else if (hash === '#/ganti-password') await renderGantiPassword(content);
     else content.innerHTML = '<div class="empty-state">Halaman tidak ditemukan.</div>';
   } catch (err) {
     content.innerHTML = `<div class="empty-state">Gagal memuat halaman: ${err.message}</div>`;
@@ -543,6 +546,54 @@ async function renderLaporan(content) {
 }
 
 // ------------------------------------------------------------
+// GANTI PASSWORD (semua role)
+// ------------------------------------------------------------
+async function renderGantiPassword(content) {
+  content.innerHTML = `
+  <h2 class="section-title">🔑 Ganti Kata Sandi</h2>
+  <div class="card" style="max-width:480px;">
+    <div class="field"><label>Kata Sandi Lama</label><input type="password" id="oldPass"></div>
+    <div class="field"><label>Kata Sandi Baru</label><input type="password" id="newPass" placeholder="Minimal 6 karakter"></div>
+    <div class="field"><label>Ulangi Kata Sandi Baru</label><input type="password" id="confirmPass"></div>
+    <button class="btn btn-primary" id="btnGantiPass">Simpan Kata Sandi Baru</button>
+  </div>`;
+
+  document.getElementById('btnGantiPass').addEventListener('click', async () => {
+    const oldPassword = document.getElementById('oldPass').value;
+    const newPassword = document.getElementById('newPass').value;
+    const confirmPassword = document.getElementById('confirmPass').value;
+    if (!oldPassword || !newPassword || !confirmPassword) return showToast('Semua kolom wajib diisi.', 'error');
+    if (newPassword !== confirmPassword) return showToast('Konfirmasi kata sandi baru tidak cocok.', 'error');
+
+    const btn = document.getElementById('btnGantiPass');
+    btn.disabled = true; btn.textContent = 'Menyimpan...';
+    try {
+      const res = await apiPost('changePassword', { email: currentUser.email, oldPassword, newPassword });
+      showToast(res.message);
+      document.getElementById('oldPass').value = '';
+      document.getElementById('newPass').value = '';
+      document.getElementById('confirmPass').value = '';
+    } catch (err) { /* toast sudah tampil */ }
+    btn.disabled = false; btn.textContent = 'Simpan Kata Sandi Baru';
+  });
+}
+
+// ------------------------------------------------------------
+// MODAL sederhana — dipakai untuk form Edit di Data Master
+// ------------------------------------------------------------
+function openModal(innerHtml) {
+  const wrap = document.createElement('div');
+  wrap.className = 'modal-backdrop';
+  wrap.id = 'modalBackdrop';
+  wrap.innerHTML = `<div class="modal-box">${innerHtml}</div>`;
+  wrap.addEventListener('click', (e) => { if (e.target === wrap) closeModal(); });
+  document.body.appendChild(wrap);
+}
+function closeModal() {
+  document.getElementById('modalBackdrop')?.remove();
+}
+
+// ------------------------------------------------------------
 // DATA MASTER (Admin)
 // ------------------------------------------------------------
 async function renderDataMaster(content) {
@@ -568,7 +619,9 @@ async function renderDataMaster(content) {
         </div>
         <button class="btn btn-primary btn-sm" id="mAddBtn">Tambah Barang</button>
         <div class="table-wrap" style="margin-top:1rem;"><table class="data-table"><thead><tr><th>Nama</th><th>Satuan</th><th>Kode BMN</th><th></th></tr></thead>
-        <tbody>${master.barang.map(b => `<tr><td>${b.NamaBarang}</td><td>${b.Satuan}</td><td>${b.KodeBMN}</td><td><button class="btn btn-outline btn-sm" onclick="hapusMaster('barang','${b.NamaBarang}')">Hapus</button></td></tr>`).join('')}</tbody></table></div>`;
+        <tbody>${master.barang.map((b, i) => `<tr><td>${b.NamaBarang}</td><td>${b.Satuan}</td><td>${b.KodeBMN}</td><td style="white-space:nowrap;">
+          <button class="btn btn-outline btn-sm" onclick="editMasterBarang(${i})">Edit</button>
+          <button class="btn btn-outline btn-sm" onclick="hapusMaster('barang','${b.NamaBarang}')">Hapus</button></td></tr>`).join('')}</tbody></table></div>`;
       document.getElementById('mAddBtn').addEventListener('click', async () => {
         await apiPost('addMasterBarang', { namaBarang: document.getElementById('mNama').value, satuan: document.getElementById('mSatuan').value });
         showToast('Barang ditambahkan.'); router();
@@ -586,7 +639,9 @@ async function renderDataMaster(content) {
         </div>
         <button class="btn btn-primary btn-sm" id="mAddBtn">Tambah Pegawai</button>
         <div class="table-wrap" style="margin-top:1rem;"><table class="data-table"><thead><tr><th>Nama</th><th>Email</th><th>Role</th><th>Bidang</th><th></th></tr></thead>
-        <tbody>${master.pegawai.map(p => `<tr><td>${p.Nama}</td><td>${p.Email}</td><td>${p.Role}</td><td>${p.BidangKode}</td><td><button class="btn btn-outline btn-sm" onclick="hapusMaster('pegawai','${p.Email}')">Hapus</button></td></tr>`).join('')}</tbody></table></div>`;
+        <tbody>${master.pegawai.map((p, i) => `<tr><td>${p.Nama}</td><td>${p.Email}</td><td>${p.Role}</td><td>${p.BidangKode}</td><td style="white-space:nowrap;">
+          <button class="btn btn-outline btn-sm" onclick="editMasterPegawai(${i})">Edit</button>
+          <button class="btn btn-outline btn-sm" onclick="hapusMaster('pegawai','${p.Email}')">Hapus</button></td></tr>`).join('')}</tbody></table></div>`;
       document.getElementById('mAddBtn').addEventListener('click', async () => {
         await apiPost('addMasterPegawai', { nama: document.getElementById('mNama').value, email: document.getElementById('mEmail').value, role: document.getElementById('mRole').value, bidangKode: document.getElementById('mBidang').value });
         showToast('Pegawai ditambahkan.'); router();
@@ -603,13 +658,71 @@ async function renderDataMaster(content) {
         </div>
         <button class="btn btn-primary btn-sm" id="mAddBtn">Tambah Bidang</button>
         <div class="table-wrap" style="margin-top:1rem;"><table class="data-table"><thead><tr><th>Kode</th><th>Nama</th><th>Atasan Mengetahui</th><th>Atasan Menyetujui</th><th></th></tr></thead>
-        <tbody>${master.bidang.map(b => `<tr><td>${b.KodeBidang}</td><td>${b.NamaBidang}</td><td>${b.AtasanMengetahuiEmail}</td><td>${b.AtasanMenyetujuiEmail}</td><td><button class="btn btn-outline btn-sm" onclick="hapusMaster('bidang','${b.KodeBidang}')">Hapus</button></td></tr>`).join('')}</tbody></table></div>`;
+        <tbody>${master.bidang.map((b, i) => `<tr><td>${b.KodeBidang}</td><td>${b.NamaBidang}</td><td>${b.AtasanMengetahuiEmail}</td><td>${b.AtasanMenyetujuiEmail}</td><td style="white-space:nowrap;">
+          <button class="btn btn-outline btn-sm" onclick="editMasterBidang(${i})">Edit</button>
+          <button class="btn btn-outline btn-sm" onclick="hapusMaster('bidang','${b.KodeBidang}')">Hapus</button></td></tr>`).join('')}</tbody></table></div>`;
       document.getElementById('mAddBtn').addEventListener('click', async () => {
         await apiPost('addMasterBidang', { kodeBidang: document.getElementById('mKode').value, namaBidang: document.getElementById('mNamaBidang').value, atasanMengetahuiEmail: document.getElementById('mAM').value, atasanMenyetujuiEmail: document.getElementById('mAS').value });
         showToast('Bidang ditambahkan.'); router();
       });
     }
   }
+  window.editMasterBarang = function (i) {
+    const b = master.barang[i];
+    openModal(`
+      <h3 class="section-title" style="font-size:16px;">Edit Barang</h3>
+      <div class="field"><label>Nama Barang</label><input id="eNama" value="${b.NamaBarang}"></div>
+      <div class="field"><label>Satuan</label><input id="eSatuan" value="${b.Satuan}"></div>
+      <div class="field"><label>Kode BMN</label><input id="eKode" value="${b.KodeBMN || ''}"></div>
+      <div class="field"><label>Kategori</label><input id="eKategori" value="${b.Kategori || ''}"></div>
+      <div style="display:flex;gap:.6rem;"><button class="btn btn-primary" id="eSaveBtn">Simpan</button><button class="btn btn-outline" onclick="closeModal()">Batal</button></div>`);
+    document.getElementById('eSaveBtn').addEventListener('click', async () => {
+      await apiPost('updateMasterBarang', {
+        originalNama: b.NamaBarang, namaBarang: document.getElementById('eNama').value,
+        satuan: document.getElementById('eSatuan').value, kodeBMN: document.getElementById('eKode').value, kategori: document.getElementById('eKategori').value
+      });
+      showToast('Barang berhasil diperbarui.'); closeModal(); router();
+    });
+  };
+
+  window.editMasterPegawai = function (i) {
+    const p = master.pegawai[i];
+    const roles = ['Admin', 'Pemohon', 'Atasan Mengetahui', 'Atasan Menyetujui', 'Perlengkapan'];
+    openModal(`
+      <h3 class="section-title" style="font-size:16px;">Edit Pegawai</h3>
+      <div class="field"><label>Nama</label><input id="eNama" value="${p.Nama}"></div>
+      <div class="field"><label>NIP</label><input id="eNip" value="${p.NIP || ''}"></div>
+      <div class="field"><label>Email</label><input id="eEmail" value="${p.Email}"></div>
+      <div class="field"><label>Role</label><select id="eRole">${roles.map(r => `<option ${r === p.Role ? 'selected' : ''}>${r}</option>`).join('')}</select></div>
+      <div class="field"><label>Kode Bidang</label><input id="eBidang" value="${p.BidangKode || ''}"></div>
+      <div style="display:flex;gap:.6rem;"><button class="btn btn-primary" id="eSaveBtn">Simpan</button><button class="btn btn-outline" onclick="closeModal()">Batal</button></div>`);
+    document.getElementById('eSaveBtn').addEventListener('click', async () => {
+      await apiPost('updateMasterPegawai', {
+        originalEmail: p.Email, nama: document.getElementById('eNama').value, nip: document.getElementById('eNip').value,
+        email: document.getElementById('eEmail').value, role: document.getElementById('eRole').value, bidangKode: document.getElementById('eBidang').value
+      });
+      showToast('Data pegawai berhasil diperbarui.'); closeModal(); router();
+    });
+  };
+
+  window.editMasterBidang = function (i) {
+    const b = master.bidang[i];
+    openModal(`
+      <h3 class="section-title" style="font-size:16px;">Edit Bidang</h3>
+      <div class="field"><label>Kode Bidang</label><input id="eKode" value="${b.KodeBidang}"></div>
+      <div class="field"><label>Nama Bidang</label><input id="eNama" value="${b.NamaBidang}"></div>
+      <div class="field"><label>Email Atasan Mengetahui</label><input id="eAM" value="${b.AtasanMengetahuiEmail || ''}"></div>
+      <div class="field"><label>Email Atasan Menyetujui</label><input id="eAS" value="${b.AtasanMenyetujuiEmail || ''}"></div>
+      <div style="display:flex;gap:.6rem;"><button class="btn btn-primary" id="eSaveBtn">Simpan</button><button class="btn btn-outline" onclick="closeModal()">Batal</button></div>`);
+    document.getElementById('eSaveBtn').addEventListener('click', async () => {
+      await apiPost('updateMasterBidang', {
+        originalKode: b.KodeBidang, kodeBidang: document.getElementById('eKode').value, namaBidang: document.getElementById('eNama').value,
+        atasanMengetahuiEmail: document.getElementById('eAM').value, atasanMenyetujuiEmail: document.getElementById('eAS').value
+      });
+      showToast('Data bidang berhasil diperbarui.'); closeModal(); router();
+    });
+  };
+
   document.querySelectorAll('#masterTabs .chip-filter').forEach(chip => {
     chip.addEventListener('click', () => {
       document.querySelectorAll('#masterTabs .chip-filter').forEach(c => c.classList.toggle('active', c === chip));
