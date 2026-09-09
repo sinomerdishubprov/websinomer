@@ -94,8 +94,8 @@ function renderLogin() {
       <div class="text-muted" style="font-size:12.5px;margin-bottom:1.5rem;">Sistem Nota Permintaan Barang<br>Dinas Perhubungan Provinsi Riau</div>
       <form id="loginForm">
         <div class="field" style="text-align:left;">
-          <label>Email Dinas</label>
-          <input type="email" id="loginEmail" placeholder="nama@dishub.riau.go.id" required>
+          <label>Email</label>
+          <input type="email" id="loginEmail" placeholder="nama@email-anda.com" required>
         </div>
         <div class="field" style="text-align:left;">
           <label>Kata Sandi</label>
@@ -103,7 +103,7 @@ function renderLogin() {
         </div>
         <button class="btn btn-primary btn-block" type="submit" id="loginBtn">Masuk</button>
       </form>
-      <div class="text-muted" style="font-size:11.5px;margin-top:1rem;">Hanya email internal Dishub Provinsi Riau yang dapat login.</div>
+      <div class="text-muted" style="font-size:11.5px;margin-top:1rem;">Login menggunakan email yang telah didaftarkan Admin di Data Master Pegawai.</div>
     </div>
   </div>`;
 
