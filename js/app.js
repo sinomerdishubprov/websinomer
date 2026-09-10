@@ -281,7 +281,7 @@ async function renderBuatNota(content) {
       <div class="field" style="margin-bottom:0;"><label>Nama Barang</label>
         <select class="itemBarang" onchange="autoFillSatuan(this)">
           <option value="">-- pilih --</option>
-          ${barangList.map(b => `<option value="${b.NamaBarang}" data-satuan="${b.Satuan}" data-kode="${b.KodeBMN}">${b.NamaBarang}</option>`).join('')}
+          ${barangList.map(b => `<option value="${b.NamaBarang}" data-satuan="${b.Satuan}">${b.NamaBarang}</option>`).join('')}
           <option value="__lainnya__">Lainnya (ketik manual)</option>
         </select>
         <input class="itemBarangManual" style="display:none;margin-top:.4rem;" placeholder="Nama barang lainnya">
@@ -320,10 +320,9 @@ async function renderBuatNota(content) {
       const jumlah = row.querySelector('.itemJumlah').value;
       const satuanSel = row.querySelector('.itemSatuan');
       const satuan = satuanSel.value === '__lainnya__' ? row.querySelector('.itemSatuanManual').value : satuanSel.value;
-      const kodeBMN = sel.selectedOptions[0] ? sel.selectedOptions[0].dataset.kode : '';
       if (namaBarang && jumlah) {
         if (!satuan) satuanKosong = true;
-        items.push({ namaBarang, jumlah: Number(jumlah), satuan, kodeBMN });
+        items.push({ namaBarang, jumlah: Number(jumlah), satuan });
       }
     });
     if (!items.length) return showToast('Tambahkan minimal satu barang.', 'error');
@@ -409,7 +408,7 @@ async function renderDetail(content, noNota) {
           <thead><tr><th>Barang</th><th>Satuan</th><th>Diminta</th><th>Disetujui</th><th>Keputusan</th><th>Catatan</th></tr></thead>
           <tbody id="itemsBody">${items.map(it => `
             <tr>
-              <td>${it.NamaBarang}<br><span class="text-muted" style="font-size:11px;">Kode: ${it.KodeBMN || '-'}</span></td>
+              <td>${it.NamaBarang}</td>
               <td>${it.Satuan}</td><td>${it.JumlahDiminta}</td><td>${it.JumlahDisetujui || '-'}</td>
               <td>${it.StatusItem ? statusBadge(it.StatusItem === 'Penuh' ? 'Selesai' : it.StatusItem === 'Ditolak' ? 'Ditolak' : 'Diproses') + ' ' + it.StatusItem : '<span class="text-muted">Menunggu</span>'}</td>
               <td>${it.Alasan || '-'}</td>
@@ -697,8 +696,8 @@ async function renderDataMaster(content) {
           <div class="field"><label>Satuan</label><input id="mSatuan"></div>
         </div>
         <button class="btn btn-primary btn-sm" id="mAddBtn">Tambah Barang</button>
-        <div class="table-wrap" style="margin-top:1rem;"><table class="data-table"><thead><tr><th>Nama</th><th>Satuan</th><th>Kode BMN</th><th></th></tr></thead>
-        <tbody>${master.barang.map((b, i) => `<tr><td>${b.NamaBarang}</td><td>${b.Satuan}</td><td>${b.KodeBMN}</td><td style="white-space:nowrap;">
+        <div class="table-wrap" style="margin-top:1rem;"><table class="data-table"><thead><tr><th>Nama</th><th>Satuan</th><th></th></tr></thead>
+        <tbody>${master.barang.map((b, i) => `<tr><td>${b.NamaBarang}</td><td>${b.Satuan}</td><td style="white-space:nowrap;">
           <button class="btn btn-outline btn-sm" onclick="editMasterBarang(${i})">Edit</button>
           <button class="btn btn-outline btn-sm" onclick="hapusMaster('barang','${b.NamaBarang}')">Hapus</button></td></tr>`).join('')}</tbody></table></div>`;
       document.getElementById('mAddBtn').addEventListener('click', async () => {
@@ -752,13 +751,12 @@ async function renderDataMaster(content) {
       <h3 class="section-title" style="font-size:16px;">Edit Barang</h3>
       <div class="field"><label>Nama Barang</label><input id="eNama" value="${b.NamaBarang}"></div>
       <div class="field"><label>Satuan</label><input id="eSatuan" value="${b.Satuan}"></div>
-      <div class="field"><label>Kode BMN</label><input id="eKode" value="${b.KodeBMN || ''}"></div>
       <div class="field"><label>Kategori</label><input id="eKategori" value="${b.Kategori || ''}"></div>
       <div style="display:flex;gap:.6rem;"><button class="btn btn-primary" id="eSaveBtn">Simpan</button><button class="btn btn-outline" onclick="closeModal()">Batal</button></div>`);
     document.getElementById('eSaveBtn').addEventListener('click', async () => {
       await apiPost('updateMasterBarang', {
         originalNama: b.NamaBarang, namaBarang: document.getElementById('eNama').value,
-        satuan: document.getElementById('eSatuan').value, kodeBMN: document.getElementById('eKode').value, kategori: document.getElementById('eKategori').value
+        satuan: document.getElementById('eSatuan').value, kategori: document.getElementById('eKategori').value
       });
       showToast('Barang berhasil diperbarui.'); closeModal(); router();
     });
