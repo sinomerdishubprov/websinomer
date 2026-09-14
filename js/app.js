@@ -50,6 +50,24 @@ window.togglePasswordVisibility = function (btn) {
   else { input.type = 'password'; btn.textContent = '👁️'; }
 };
 
+// Ubah nama bidang (HURUF BESAR SEMUA di Master_Bidang) menjadi format
+// jabatan rapi: "Kepala Subbagian Keuangan, Perlengkapan, dan PBMD".
+// Setara dengan formatJabatanKepalaBidang di backend (PdfQr.gs), supaya
+// tampilan web dan PDF konsisten.
+function formatJabatanKepalaBidang(namaBidang) {
+  if (!namaBidang) return 'Kepala Seksi Terkait';
+  const kataSambung = ['dan', 'di', 'ke', 'dari', 'yang', 'dengan', 'untuk', 'atau', 'pada'];
+  const words = namaBidang.toLowerCase().split(' ');
+  const hasil = words.map((w, idx) => {
+    const bersih = w.replace(/[,.]/g, '');
+    if (!bersih) return w;
+    if (bersih.length <= 5 && !/[aeiou]/i.test(bersih)) return w.toUpperCase();
+    if (idx !== 0 && kataSambung.includes(bersih)) return w;
+    return w.charAt(0).toUpperCase() + w.slice(1);
+  });
+  return 'Kepala ' + hasil.join(' ');
+}
+
 function statusBadge(status) {
   const map = { Diajukan: 'badge-diajukan', Diketahui: 'badge-diketahui', Disetujui: 'badge-disetujui', Diproses: 'badge-diproses', Selesai: 'badge-selesai', Ditolak: 'badge-ditolak' };
   return `<span class="badge ${map[status] || ''}">${status}</span>`;
@@ -419,13 +437,13 @@ async function renderDetail(content, noNota) {
       ${renderAksiRole(n, items)}
 
       <div class="dual-auth">
-        <div class="auth-box"><div class="text-muted" style="font-size:11px;font-weight:600;">MENGETAHUI / MEMERIKSA</div>
-          <div style="font-weight:600;">Kepala Seksi Terkait</div>
+        <div class="auth-box"><div class="text-muted" style="font-size:11px;font-weight:600;">Mengetahui,</div>
+          <div style="font-weight:600;">${formatJabatanKepalaBidang(n.BidangNama)}</div>
           <div class="qr-placeholder">${n.QRKiriKode ? 'QR: ' + n.QRKiriKode : 'Belum diparaf'}</div>
           <div style="font-size:12.5px;">${n.AtasanMengetahuiNama || '-'}</div>
           <div class="text-muted" style="font-size:11px;">${n.TglDiketahui || ''}</div></div>
-        <div class="auth-box"><div class="text-muted" style="font-size:11px;font-weight:600;">MENYETUJUI / PEJABAT BERWENANG</div>
-          <div style="font-weight:600;">Sekretaris Dinas Perhubungan</div>
+        <div class="auth-box"><div class="text-muted" style="font-size:11px;font-weight:600;">Menyetujui,</div>
+          <div style="font-weight:600;">Sekretaris Dinas Perhubungan Provinsi Riau</div>
           <div class="qr-placeholder">${n.QRKananKode ? 'QR: ' + n.QRKananKode : 'Belum disetujui'}</div>
           <div style="font-size:12.5px;">${n.AtasanMenyetujuiNama || '-'}</div>
           <div class="text-muted" style="font-size:11px;">${n.TglDisetujui || ''}</div></div>
