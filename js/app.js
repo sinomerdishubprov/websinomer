@@ -749,16 +749,24 @@ async function renderDataMaster(content) {
           <div class="field"><label>Nama Bidang</label><input id="mNamaBidang"></div>
         </div>
         <div class="grid-2" style="align-items:end;">
+          <div class="field"><label>Singkatan (untuk penomoran surat, mis. "KEU")</label><input id="mSingkatan"></div>
+          <div></div>
+        </div>
+        <div class="grid-2" style="align-items:end;">
           <div class="field"><label>Email Atasan Mengetahui</label><input id="mAM"></div>
           <div class="field"><label>Email Atasan Menyetujui</label><input id="mAS"></div>
         </div>
         <button class="btn btn-primary btn-sm" id="mAddBtn">Tambah Bidang</button>
-        <div class="table-wrap" style="margin-top:1rem;"><table class="data-table"><thead><tr><th>Kode</th><th>Nama</th><th>Atasan Mengetahui</th><th>Atasan Menyetujui</th><th></th></tr></thead>
-        <tbody>${master.bidang.map((b, i) => `<tr><td>${b.KodeBidang}</td><td>${b.NamaBidang}</td><td>${b.AtasanMengetahuiEmail}</td><td>${b.AtasanMenyetujuiEmail}</td><td style="white-space:nowrap;">
+        <div class="table-wrap" style="margin-top:1rem;"><table class="data-table"><thead><tr><th>Kode</th><th>Nama</th><th>Singkatan</th><th>Atasan Mengetahui</th><th>Atasan Menyetujui</th><th></th></tr></thead>
+        <tbody>${master.bidang.map((b, i) => `<tr><td>${b.KodeBidang}</td><td>${b.NamaBidang}</td><td>${b.Singkatan || '-'}</td><td>${b.AtasanMengetahuiEmail}</td><td>${b.AtasanMenyetujuiEmail}</td><td style="white-space:nowrap;">
           <button class="btn btn-outline btn-sm" onclick="editMasterBidang(${i})">Edit</button>
           <button class="btn btn-outline btn-sm" onclick="hapusMaster('bidang','${b.KodeBidang}')">Hapus</button></td></tr>`).join('')}</tbody></table></div>`;
       document.getElementById('mAddBtn').addEventListener('click', async () => {
-        await apiPost('addMasterBidang', { kodeBidang: document.getElementById('mKode').value, namaBidang: document.getElementById('mNamaBidang').value, atasanMengetahuiEmail: document.getElementById('mAM').value, atasanMenyetujuiEmail: document.getElementById('mAS').value });
+        await apiPost('addMasterBidang', {
+          kodeBidang: document.getElementById('mKode').value, namaBidang: document.getElementById('mNamaBidang').value,
+          singkatan: document.getElementById('mSingkatan').value,
+          atasanMengetahuiEmail: document.getElementById('mAM').value, atasanMenyetujuiEmail: document.getElementById('mAS').value
+        });
         showToast('Bidang ditambahkan.'); router();
       });
     }
@@ -817,12 +825,14 @@ async function renderDataMaster(content) {
       <h3 class="section-title" style="font-size:16px;">Edit Bidang</h3>
       <div class="field"><label>Kode Bidang</label><input id="eKode" value="${b.KodeBidang}"></div>
       <div class="field"><label>Nama Bidang</label><input id="eNama" value="${b.NamaBidang}"></div>
+      <div class="field"><label>Singkatan (untuk penomoran surat, mis. "KEU")</label><input id="eSingkatan" value="${b.Singkatan || ''}"></div>
       <div class="field"><label>Email Atasan Mengetahui</label><input id="eAM" value="${b.AtasanMengetahuiEmail || ''}"></div>
       <div class="field"><label>Email Atasan Menyetujui</label><input id="eAS" value="${b.AtasanMenyetujuiEmail || ''}"></div>
       <div style="display:flex;gap:.6rem;"><button class="btn btn-primary" id="eSaveBtn">Simpan</button><button class="btn btn-outline" onclick="closeModal()">Batal</button></div>`);
     document.getElementById('eSaveBtn').addEventListener('click', async () => {
       await apiPost('updateMasterBidang', {
         originalKode: b.KodeBidang, kodeBidang: document.getElementById('eKode').value, namaBidang: document.getElementById('eNama').value,
+        singkatan: document.getElementById('eSingkatan').value,
         atasanMengetahuiEmail: document.getElementById('eAM').value, atasanMenyetujuiEmail: document.getElementById('eAS').value
       });
       showToast('Data bidang berhasil diperbarui.'); closeModal(); router();
