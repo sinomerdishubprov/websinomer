@@ -34,8 +34,11 @@ const NAV_ITEMS = {
     ['#/laporan', '📊 Laporan & Rekap']
   ]
 };
-// Menu "Ganti Password" tersedia untuk SEMUA role, ditambahkan otomatis di akhir.
-Object.keys(NAV_ITEMS).forEach(role => NAV_ITEMS[role].push(['#/ganti-password', '🔑 Ganti Password']));
+// Menu "Panduan" dan "Ganti Password" tersedia untuk SEMUA role, ditambahkan otomatis di akhir.
+Object.keys(NAV_ITEMS).forEach(role => {
+  NAV_ITEMS[role].push(['#/panduan', '📚 Panduan']);
+  NAV_ITEMS[role].push(['#/ganti-password', '🔑 Ganti Password']);
+});
 
 function initials(nama) {
   return (nama || '?').split(' ').map(w => w[0]).slice(0, 2).join('').toUpperCase();
@@ -98,6 +101,7 @@ async function router() {
     else if (hash === '#/laporan') await renderLaporan(content);
     else if (hash === '#/data-master') await renderDataMaster(content);
     else if (hash === '#/ganti-password') await renderGantiPassword(content);
+    else if (hash === '#/panduan') await renderPanduan(content);
     else content.innerHTML = '<div class="empty-state">Halaman tidak ditemukan.</div>';
   } catch (err) {
     content.innerHTML = `<div class="empty-state">Gagal memuat halaman: ${err.message}</div>`;
@@ -688,6 +692,119 @@ function openPdfModal(blobUrl, noNota) {
   document.body.appendChild(wrap);
   document.getElementById('closePdfModalBtn').addEventListener('click', cleanup);
 }
+
+// ------------------------------------------------------------
+// PANDUAN (semua role melihat, Admin bisa tambah/hapus)
+// ------------------------------------------------------------
+function getYoutubeEmbedUrl(url) {
+  if (!url) return null;
+  const patterns = [
+    /youtube\.com\/watch\?v=([^&]+)/,
+    /youtu\.be\/([^?&]+)/,
+    /youtube\.com\/embed\/([^?&]+)/,
+    /youtube\.com\/shorts\/([^?&]+)/
+  ];
+  for (const p of patterns) {
+    const m = url.match(p);
+    if (m) return 'https://www.youtube.com/embed/' + m[1];
+  }
+  return null;
+}
+
+async function renderPanduan(content) {
+  const res = await apiGet('getPanduanList', {});
+  const list = res.data;
+  const isAdmin = currentUser.role === 'Admin';
+
+  content.innerHTML = `
+  <div class="flex-between">
+    <h2 class="section-title">📚 Panduan Pengisian Nota</h2>
+    ${isAdmin ? '<button class="btn btn-primary btn-sm" id="tambahPanduanBtn">➕ Tambah Panduan</button>' : ''}
+  </div>
+  <p class="text-muted" style="margin-top:-.5rem;margin-bottom:1rem;">Kumpulan dokumen dan video panduan pengisian Nota Permintaan Barang.</p>
+  <div id="panduanList" class="grid-cards"></div>`;
+
+  function renderList() {
+    const wrap = document.getElementById('panduanList');
+    if (!list.length) {
+      wrap.innerHTML = `<div class="empty-state" style="grid-column:1/-1;">Belum ada panduan yang ditambahkan.</div>`;
+      return;
+    }
+    wrap.innerHTML = list.map(p => {
+      const hapusBtn = isAdmin ? `<button class="btn btn-outline btn-sm" onclick="hapusPanduan('${p.ID}')">🗑️ Hapus</button>` : '';
+      if (p.Jenis === 'PDF') {
+        return `<div class="card">
+          <div style="font-size:32px;">📄</div>
+          <h3 style="font-size:15px;margin:.5rem 0 .25rem;">${p.Judul}</h3>
+          ${p.Deskripsi ? `<p class="text-muted" style="font-size:12.5px;">${p.Deskripsi}</p>` : ''}
+          <div style="display:flex;gap:.5rem;margin-top:.75rem;flex-wrap:wrap;">
+            <a href="${p.URL}" target="_blank" class="btn btn-outline btn-sm">Buka PDF</a>
+            ${hapusBtn}
+          </div>
+        </div>`;
+      }
+      const embed = getYoutubeEmbedUrl(p.URL);
+      return `<div class="card">
+        <h3 style="font-size:15px;margin:0 0 .6rem;">${p.Judul}</h3>
+        ${embed
+          ? `<div style="position:relative;padding-bottom:56.25%;height:0;border-radius:8px;overflow:hidden;"><iframe src="${embed}" style="position:absolute;top:0;left:0;width:100%;height:100%;border:none;" allowfullscreen></iframe></div>`
+          : `<a href="${p.URL}" target="_blank">${p.URL}</a>`}
+        ${p.Deskripsi ? `<p class="text-muted" style="font-size:12.5px;margin-top:.6rem;">${p.Deskripsi}</p>` : ''}
+        ${hapusBtn ? `<div style="margin-top:.6rem;">${hapusBtn}</div>` : ''}
+      </div>`;
+    }).join('');
+  }
+  renderList();
+
+  if (isAdmin) {
+    document.getElementById('tambahPanduanBtn').addEventListener('click', () => {
+      openModal(`
+        <h3 class="section-title" style="font-size:16px;">Tambah Panduan</h3>
+        <div class="field"><label>Jenis Panduan</label>
+          <select id="pJenis"><option value="PDF">Dokumen PDF</option><option value="Video">Video YouTube</option></select>
+        </div>
+        <div class="field"><label>Judul</label><input id="pJudul" placeholder="mis. Cara Mengisi Nota Permintaan Barang"></div>
+        <div class="field"><label>Deskripsi (opsional)</label><textarea id="pDeskripsi"></textarea></div>
+        <div class="field" id="pFileWrap"><label>File PDF</label><input type="file" id="pFile" accept="application/pdf"></div>
+        <div class="field" id="pUrlWrap" style="display:none;"><label>URL Video YouTube</label><input id="pUrl" placeholder="https://youtube.com/watch?v=..."></div>
+        <button class="btn btn-primary" id="pSaveBtn">Simpan Panduan</button>`);
+
+      document.getElementById('pJenis').addEventListener('change', (e) => {
+        document.getElementById('pFileWrap').style.display = e.target.value === 'PDF' ? 'block' : 'none';
+        document.getElementById('pUrlWrap').style.display = e.target.value === 'Video' ? 'block' : 'none';
+      });
+
+      document.getElementById('pSaveBtn').addEventListener('click', async () => {
+        const jenis = document.getElementById('pJenis').value;
+        const judul = document.getElementById('pJudul').value.trim();
+        const deskripsi = document.getElementById('pDeskripsi').value.trim();
+        if (!judul) return showToast('Judul wajib diisi.', 'error');
+
+        const btn = document.getElementById('pSaveBtn');
+        btn.disabled = true; btn.textContent = 'Menyimpan...';
+        try {
+          if (jenis === 'PDF') {
+            const file = document.getElementById('pFile').files[0];
+            if (!file) { showToast('Pilih file PDF terlebih dahulu.', 'error'); btn.disabled = false; btn.textContent = 'Simpan Panduan'; return; }
+            const base64 = await fileToBase64(file);
+            await apiPost('addPanduanPdf', { judul, deskripsi, fileBase64: base64, fileName: file.name, mimeType: file.type, uploaderEmail: currentUser.email });
+          } else {
+            const url = document.getElementById('pUrl').value.trim();
+            if (!url) { showToast('URL video YouTube wajib diisi.', 'error'); btn.disabled = false; btn.textContent = 'Simpan Panduan'; return; }
+            await apiPost('addPanduanVideo', { judul, deskripsi, youtubeUrl: url, uploaderEmail: currentUser.email });
+          }
+          showToast('Panduan berhasil ditambahkan.'); closeModal(); router();
+        } catch (err) { btn.disabled = false; btn.textContent = 'Simpan Panduan'; }
+      });
+    });
+  }
+}
+
+window.hapusPanduan = async function (id) {
+  if (!confirm('Hapus panduan ini?')) return;
+  await apiPost('deletePanduan', { id });
+  showToast('Panduan dihapus.'); router();
+};
 
 // ------------------------------------------------------------
 // DATA MASTER (Admin)
