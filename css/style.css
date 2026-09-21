@@ -209,3 +209,16 @@ table.data-table { width: 100%; border-collapse: collapse; }
   .mobile-nav a { display: flex; flex-direction: column; align-items: center; gap: 2px; font-size: 10px; color: var(--text-muted); font-weight: 600; }
   .mobile-nav a.active { color: var(--primary); }
 }
+
+/* Drawer navigasi lengkap untuk mobile (berisi seluruh menu + Keluar Sistem) */
+.mobile-drawer-backdrop {
+  display: none; position: fixed; inset: 0; background: rgba(15,23,42,.4); z-index: 60;
+}
+.mobile-drawer-backdrop.show { display: block; }
+.mobile-drawer {
+  position: absolute; top: 0; left: 0; bottom: 0; width: 78%; max-width: 320px;
+  background: #fff; display: flex; flex-direction: column; box-shadow: var(--shadow-3);
+  animation: slideInDrawer .2s ease-out;
+}
+@keyframes slideInDrawer { from { transform: translateX(-100%); } to { transform: translateX(0); } }
+.mobile-drawer .nav-item { padding: .75rem 1.25rem; }

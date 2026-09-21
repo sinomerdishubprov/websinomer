@@ -185,19 +185,48 @@ function renderShell() {
       </div>
       <div class="page-content" id="page-content"></div>
       <div class="mobile-nav">
-        ${navItems.slice(0, 4).map(([href, label]) => `<a href="${href}">${label.split(' ')[0]}<span>${label.split(' ').slice(1).join(' ')}</span></a>`).join('')}
+        ${navItems.slice(0, 3).map(([href, label]) => `<a href="${href}">${label.split(' ')[0]}<span>${label.split(' ').slice(1).join(' ')}</span></a>`).join('')}
+        <a href="#" id="mobileMenuBtn">☰<span>Menu</span></a>
+      </div>
+    </div>
+  </div>
+  <div class="mobile-drawer-backdrop" id="mobileDrawerBackdrop">
+    <div class="mobile-drawer">
+      <div class="flex-between" style="padding:1rem 1.25rem;border-bottom:1px solid var(--border-subtle);">
+        <div class="sidebar-brand" style="padding:0;">🔷 SI-NOMER</div>
+        <button class="btn btn-outline btn-sm" id="closeMobileDrawerBtn">✕</button>
+      </div>
+      <div style="padding:1rem 0;">
+        ${navItems.map(([href, label]) => `<a class="nav-item" href="${href}" onclick="closeMobileDrawer()">${label}</a>`).join('')}
+      </div>
+      <div style="padding:1rem 1.25rem;border-top:1px solid var(--border-subtle);">
+        <button class="btn-logout" id="logoutBtnMobile">Keluar Sistem</button>
       </div>
     </div>
   </div>`;
 
   document.getElementById('logoutBtn').addEventListener('click', doLogout);
+  document.getElementById('logoutBtnMobile').addEventListener('click', doLogout);
   document.getElementById('globalSearch').addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && e.target.value.trim()) {
       sessionSearchQuery = e.target.value.trim();
       location.hash = '#/nota-saya';
     }
   });
+
+  document.getElementById('mobileMenuBtn').addEventListener('click', (e) => {
+    e.preventDefault();
+    document.getElementById('mobileDrawerBackdrop').classList.add('show');
+  });
+  document.getElementById('closeMobileDrawerBtn').addEventListener('click', closeMobileDrawer);
+  document.getElementById('mobileDrawerBackdrop').addEventListener('click', (e) => {
+    if (e.target.id === 'mobileDrawerBackdrop') closeMobileDrawer();
+  });
 }
+
+window.closeMobileDrawer = function () {
+  document.getElementById('mobileDrawerBackdrop')?.classList.remove('show');
+};
 let sessionSearchQuery = '';
 
 // ------------------------------------------------------------
