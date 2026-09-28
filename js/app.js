@@ -607,7 +607,8 @@ async function renderDetail(content, noNota) {
         <div class="auth-box"><div class="text-muted" style="font-size:11px;font-weight:600;">PIHAK KEDUA (yang menerima)</div>
           <div class="qr-placeholder">QR: ${n.QRBastKiriKode}</div>
           <div style="font-weight:600;font-size:12.5px;">${n.BastPihakKeduaNama || '-'}</div>
-          <div class="text-muted" style="font-size:11px;">NIP. ${n.BastPihakKeduaNIP || '-'}</div></div>
+          <div class="text-muted" style="font-size:11px;">NIP. ${n.BastPihakKeduaNIP || '-'}</div>
+          ${n.BastPihakKeduaNama && n.BastPihakKeduaNama !== n.PemohonNama ? `<div class="text-muted" style="font-size:11px;margin-top:.25rem;">mewakili pemohon ${n.PemohonNama}</div>` : ''}</div>
         <div class="auth-box"><div class="text-muted" style="font-size:11px;font-weight:600;">PIHAK PERTAMA (yang menyerahkan)</div>
           <div class="qr-placeholder">QR: ${n.QRBastKananKode}</div>
           <div style="font-weight:600;font-size:12.5px;">${n.BastPihakPertamaNama || '-'}</div>
@@ -657,7 +658,7 @@ async function renderDetail(content, noNota) {
 
   document.getElementById('hapusNotaBtn')?.addEventListener('click', () => hapusNotaPemohon(encodeURIComponent(n.NoNota)));
 
-  attachDetailActionHandlers(n, items);
+  attachDetailActionHandlers(n, items, res);
 }
 
 // Pesan singkat di atas detail nota sesuai kondisinya
@@ -672,7 +673,9 @@ function renderBannerStatus(n) {
     return `<div class="info-banner info-success">✅ <b>Nota Anda sudah disetujui.</b> Silakan ambil barang di Bagian Perlengkapan. Berita Acara Serah Terima diterbitkan saat barang diserahkan.</div>`;
   }
   if (n.Status === 'Selesai' && n.BastTanggal) {
-    return `<div class="info-banner info-success">🤝 <b>Barang sudah diserahterimakan</b> pada ${fmtTgl(n.BastTanggal, false)}. Berita Acara Serah Terima ada di halaman 2 PDF.</div>`;
+    const wakil = n.BastPihakKeduaNama && n.BastPihakKeduaNama !== n.PemohonNama
+      ? ` kepada <b>${n.BastPihakKeduaNama}</b> (mewakili pemohon)` : '';
+    return `<div class="info-banner info-success">🤝 <b>Barang sudah diserahterimakan</b>${wakil} pada ${fmtTgl(n.BastTanggal, false)}. Berita Acara Serah Terima ada di halaman 2 PDF.</div>`;
   }
   return '';
 }
@@ -726,23 +729,45 @@ function renderAksiRole(n, items, res) {
     const v = res.viewer || { nama: currentUser.nama, nip: currentUser.nip, jabatan: '' };
     const now = new Date();
     const tglHariIni = HARI_ID[now.getDay()] + ', ' + now.getDate() + ' ' + BULAN_ID[now.getMonth()] + ' ' + now.getFullYear();
-    const kosong = '<span class="text-danger">Jabatan belum diisi</span>';
-    const jabatanKosong = !v.jabatan || !res.pemohonJabatan;
+    const pemohon = { nama: n.PemohonNama, nip: n.PemohonNIP, jabatan: res.pemohonJabatan };
     return `<div class="card" style="margin-bottom:1rem;">
       <h3 class="section-title" style="font-size:14px;">Tindakan: Terbitkan Berita Acara Serah Terima</h3>
-      <p class="text-muted" style="font-size:12.5px;margin:-.25rem 0 .75rem;">Terbitkan setelah pemohon datang dan menerima barang. Tanggal berita acara otomatis mengikuti hari ini.</p>
+      <p class="text-muted" style="font-size:12.5px;margin:-.25rem 0 .75rem;">Terbitkan setelah barang diterima. Tanggal berita acara otomatis mengikuti hari ini.</p>
       <table class="data-table" style="border:none;margin-bottom:.75rem;">
         <tr><td class="text-muted">Nomor</td><td><b>${n.NoNota}</b></td></tr>
         <tr><td class="text-muted">Tanggal</td><td>${tglHariIni}</td></tr>
-        <tr><td class="text-muted">Pihak Pertama<br>(yang menyerahkan)</td><td><b>${v.nama}</b><br>NIP. ${v.nip || '-'}<br>${v.jabatan || kosong}</td></tr>
-        <tr><td class="text-muted">Pihak Kedua<br>(yang menerima)</td><td><b>${n.PemohonNama}</b><br>NIP. ${n.PemohonNIP || '-'}<br>${res.pemohonJabatan || kosong}</td></tr>
+        <tr><td class="text-muted">Pihak Pertama<br>(yang menyerahkan)</td><td>${htmlPihakBast(v)}</td></tr>
+        <tr><td class="text-muted">Pihak Kedua<br>(yang menerima)</td><td id="pratinjauPihakKedua">${htmlPihakBast(pemohon)}</td></tr>
       </table>
-      ${jabatanKosong ? '<div class="info-banner info-warning">Jabatan yang kosong akan tertulis "-" di berita acara. Minta Admin mengisinya di menu Data Master → Pegawai sebelum menerbitkan.</div>' : ''}
-      <button class="btn btn-primary" id="btnTerbitkanBast">📝 Terbitkan Berita Acara</button>
+      <label style="display:flex;align-items:center;gap:.5rem;font-size:13px;font-weight:600;cursor:pointer;">
+        <input type="checkbox" id="cbDiwakilkan" style="width:auto;margin:0;"> Barang diambil oleh orang lain (bukan pemohon)
+      </label>
+      <div id="wakilWrap" style="display:none;margin-top:.75rem;">
+        <div class="field"><label>Penerima barang</label>
+          <select id="wakilPilih"><option value="">Memuat daftar pegawai...</option></select></div>
+        <div id="wakilManual" style="display:none;">
+          <div class="grid-2">
+            <div class="field"><label>Nama penerima</label><input id="wakilNama"></div>
+            <div class="field"><label>NIP (kosongkan bila tidak ada)</label><input id="wakilNip"></div>
+          </div>
+          <div class="field"><label>Jabatan penerima</label><input id="wakilJabatan" placeholder="mis. Pengemudi, Tenaga Honorer"></div>
+        </div>
+      </div>
+      <div id="bannerJabatan" class="info-banner info-warning" style="display:none;margin-top:.75rem;">Jabatan yang kosong akan tertulis "-" di berita acara. Minta Admin mengisinya di menu Data Master → Pegawai sebelum menerbitkan.</div>
+      <button class="btn btn-primary" id="btnTerbitkanBast" style="margin-top:.75rem;">📝 Terbitkan Berita Acara</button>
     </div>`;
   }
 
   return '';
+}
+
+function esc(x) {
+  return String(x === undefined || x === null ? '' : x).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+// Nama, NIP, jabatan satu pihak di pratinjau Berita Acara
+function htmlPihakBast(p) {
+  return `<b>${esc(p.nama)}</b><br>NIP. ${esc(p.nip) || '-'}<br>${p.jabatan ? esc(p.jabatan) : '<span class="text-danger">Jabatan belum diisi</span>'}`;
 }
 
 // Jalankan satu aksi: tombol dikunci selama proses, lalu halaman dimuat ulang.
@@ -759,7 +784,7 @@ async function jalankanAksi(btnId, teksProses, kirim) {
   }
 }
 
-function attachDetailActionHandlers(n, items) {
+function attachDetailActionHandlers(n, items, res) {
   // --- Atasan Mengetahui ---
   document.getElementById('btnSetujuiMengetahui')?.addEventListener('click', () => {
     jalankanAksi('btnSetujuiMengetahui', 'Memproses...', () => apiPost('approveMengetahui', {
@@ -821,13 +846,73 @@ function attachDetailActionHandlers(n, items) {
     }));
   });
 
-  // --- Perlengkapan: Berita Acara Serah Terima ---
-  document.getElementById('btnTerbitkanBast')?.addEventListener('click', () => {
-    if (!confirm('Pastikan pemohon sudah datang dan menerima barang. Terbitkan Berita Acara Serah Terima sekarang?')) return;
-    jalankanAksi('btnTerbitkanBast', 'Menerbitkan... (membuat PDF, mohon tunggu)', () => apiPost('terbitkanBast', {
-      noNota: n.NoNota, petugasEmail: currentUser.email
-    }));
-  });
+  // --- Perlengkapan: Berita Acara Serah Terima (penerima bisa diwakilkan) ---
+  const cbWakil = document.getElementById('cbDiwakilkan');
+  if (cbWakil) {
+    const pemohon = { nama: n.PemohonNama, nip: n.PemohonNIP, jabatan: res.pemohonJabatan, email: n.PemohonEmail };
+    const jabatanPertama = (res.viewer || {}).jabatan;
+    const sel = document.getElementById('wakilPilih');
+    const nilai = (id) => document.getElementById(id).value.trim();
+    let daftarPegawai = null;
+
+    const penerimaSaatIni = () => {
+      if (!cbWakil.checked) return Object.assign({ mode: 'pemohon' }, pemohon);
+      if (sel.value === '__manual__') return { mode: 'manual', nama: nilai('wakilNama'), nip: nilai('wakilNip'), jabatan: nilai('wakilJabatan') };
+      const p = (daftarPegawai || []).find(x => x.Email === sel.value);
+      return p ? { mode: 'pegawai', email: p.Email, nama: p.Nama, nip: p.NIP, jabatan: p.Jabatan || '' } : { mode: 'kosong' };
+    };
+    const perbarui = () => {
+      const p = penerimaSaatIni();
+      document.getElementById('wakilManual').style.display = cbWakil.checked && sel.value === '__manual__' ? 'block' : 'none';
+      let html;
+      if (p.mode === 'kosong') html = '<span class="text-muted">Pilih penerima barang</span>';
+      else if (p.mode === 'manual' && !p.nama) html = '<span class="text-muted">Isi nama & jabatan penerima</span>';
+      else html = htmlPihakBast(p) + (p.mode !== 'pemohon' ? `<br><span class="text-muted" style="font-size:11.5px;">mewakili ${esc(pemohon.nama)}</span>` : '');
+      document.getElementById('pratinjauPihakKedua').innerHTML = html;
+      const jabatanKeduaKosong = (p.mode === 'pemohon' || p.mode === 'pegawai') && !p.jabatan;
+      document.getElementById('bannerJabatan').style.display = (!jabatanPertama || jabatanKeduaKosong) ? 'block' : 'none';
+    };
+
+    cbWakil.addEventListener('change', async () => {
+      document.getElementById('wakilWrap').style.display = cbWakil.checked ? 'block' : 'none';
+      if (cbWakil.checked && !daftarPegawai) {
+        const opsiManual = '<option value="__manual__">Tidak terdaftar di sistem (isi manual)</option>';
+        try {
+          const r = await apiGet('getMasterData', { jenis: 'pegawai' });
+          const emailPemohon = String(pemohon.email || '').trim().toLowerCase();
+          daftarPegawai = r.data
+            .filter(p => p.Email && String(p.Email).trim().toLowerCase() !== emailPemohon)
+            .sort((a, b) => String(a.Nama).localeCompare(String(b.Nama)));
+          sel.innerHTML = '<option value="">-- pilih pegawai --</option>'
+            + daftarPegawai.map(p => `<option value="${esc(p.Email)}">${esc(p.Nama)}${p.Jabatan ? ' — ' + esc(p.Jabatan) : ''}</option>`).join('')
+            + opsiManual;
+        } catch (err) {
+          daftarPegawai = [];
+          sel.innerHTML = '<option value="">-- pilih --</option>' + opsiManual;
+        }
+      }
+      perbarui();
+    });
+    sel.addEventListener('change', perbarui);
+    ['wakilNama', 'wakilNip', 'wakilJabatan'].forEach(id => document.getElementById(id).addEventListener('input', perbarui));
+    perbarui();
+
+    document.getElementById('btnTerbitkanBast').addEventListener('click', () => {
+      const p = penerimaSaatIni();
+      if (p.mode === 'kosong') return showToast('Pilih penerima barang terlebih dahulu.', 'error');
+      if (p.mode === 'manual' && (!p.nama || !p.jabatan)) return showToast('Isi nama dan jabatan penerima barang.', 'error');
+      const pesan = p.mode === 'pemohon'
+        ? 'Pastikan pemohon (' + pemohon.nama + ') sudah menerima barang.'
+        : 'Barang diterima oleh ' + p.nama + ' mewakili ' + pemohon.nama + '. Pemohon akan diberi tahu lewat email.';
+      if (!confirm(pesan + '\n\nTerbitkan Berita Acara Serah Terima sekarang?')) return;
+      const penerima = p.mode === 'pemohon' ? { mode: 'pemohon' }
+        : p.mode === 'pegawai' ? { mode: 'pegawai', email: p.email }
+        : { mode: 'manual', nama: p.nama, nip: p.nip, jabatan: p.jabatan };
+      jalankanAksi('btnTerbitkanBast', 'Menerbitkan... (membuat PDF, mohon tunggu)', () => apiPost('terbitkanBast', {
+        noNota: n.NoNota, petugasEmail: currentUser.email, penerima
+      }));
+    });
+  }
 }
 
 // ------------------------------------------------------------
