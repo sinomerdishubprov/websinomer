@@ -232,3 +232,34 @@ table.data-table { width: 100%; border-collapse: collapse; }
 }
 @keyframes slideInDrawer { from { transform: translateX(-100%); } to { transform: translateX(0); } }
 .mobile-drawer .nav-item { padding: .75rem 1.25rem; }
+
+/* ---------- Tampilan cepat: kerangka muat, indikator sinkron, status menyimpan ---------- */
+.page-enter { animation: halamanMasuk .16s ease-out; }
+@keyframes halamanMasuk { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { .page-enter { animation: none; } }
+
+.skeleton { background: linear-gradient(90deg, var(--surface-subtle) 25%, #E9EEF5 37%, var(--surface-subtle) 63%); background-size: 400% 100%; animation: kilau 1.3s ease infinite; border-radius: var(--radius-sm); }
+.skeleton-hero { height: 150px; border-radius: var(--radius-xl); margin-bottom: 1.5rem; }
+.skeleton-line { height: 14px; margin: .6rem 0; }
+@keyframes kilau { 0% { background-position: 100% 50%; } 100% { background-position: 0 50%; } }
+
+.sync-pill { display: inline-flex; align-items: center; gap: .35rem; border: 1px solid var(--border-subtle); background: #fff; border-radius: var(--radius-full); padding: .3rem .75rem; font-size: 12px; font-weight: 600; white-space: nowrap; cursor: pointer; transition: background .15s, color .15s, border-color .15s; margin-left: auto; }
+.sync-pill.sync-ok { color: var(--status-selesai-text); }
+.sync-pill.sync-ok:hover { background: var(--status-selesai-bg); border-color: #BBF7D0; }
+.sync-pill.sync-jalan { color: var(--primary); background: var(--surface-container-low); }
+.sync-pill.sync-simpan { color: var(--status-diproses-text); background: var(--status-diproses-bg); border-color: #FDE68A; }
+.sync-pill.sync-offline { color: var(--status-danger-text); background: var(--status-danger-bg); border-color: #FECACA; }
+.topbar-search + .sync-pill { margin-left: auto; }
+.topbar-search { min-width: 0; }
+.topbar-search input { min-width: 0; width: 100%; }
+@media (max-width: 600px) {
+  .topbar { gap: .5rem; }
+  .topbar-search { padding: .45rem .7rem; }
+  .sync-pill { padding: .3rem .55rem; font-size: 11px; }
+  .topbar-user > div:first-child { display: none; }
+}
+
+.info-simpan { background: var(--surface-container-low); color: var(--secondary); border-color: #C7D7FE; }
+.pending-dot { font-size: 11px; }
+.timeline-dot-pending { background: var(--status-diproses-text); animation: kedip 1s ease-in-out infinite; }
+@keyframes kedip { 50% { opacity: .3; } }

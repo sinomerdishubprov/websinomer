@@ -106,46 +106,127 @@ function statusBadge(status) {
 }
 
 // ------------------------------------------------------------
-// ROUTER
+// ROUTER — semua halaman digambar dari data lokal (store), tanpa
+// menunggu server. Pemeriksaan data baru berjalan di latar belakang.
+// router({ ulang: true }) = gambar ulang halaman yang sama (posisi gulir tetap).
 // ------------------------------------------------------------
-async function router() {
+let _tandaShell = '';
+let halamanKotor = false; // pengguna sedang mengisi form di halaman ini
+const RUTE_DAFTAR = ['#/nota-saya', '#/menunggu-paraf', '#/tinjau-persetujuan', '#/periksa-stok', '#/serah-terima'];
+const filterStatusAktif = {};
+
+function router(opsi) {
+  opsi = opsi || {};
   const hash = location.hash || '#/dashboard';
   if (!isLoggedIn() && hash !== '#/login') { location.hash = '#/login'; return; }
   if (isLoggedIn() && hash === '#/login') { location.hash = '#/dashboard'; return; }
 
-  if (hash === '#/login') return renderLogin();
+  if (hash === '#/login') { _tandaShell = ''; return renderLogin(); }
+  if (hash === '#/proses-barang') { location.hash = '#/serah-terima'; return; } // alamat menu lama
 
-  renderShell();
+  const tanda = [currentUser.email, currentUser.role, currentUser.nama].join('|');
+  if (_tandaShell !== tanda || !document.getElementById('page-content')) {
+    renderShell();
+    _tandaShell = tanda;
+  }
   const content = document.getElementById('page-content');
-  content.innerHTML = '<div style="text-align:center;padding:3rem;"><span class="loading-spin"></span></div>';
+  const posisiGulir = opsi.ulang ? (window.scrollY || 0) : 0;
+  if (!opsi.ulang) {
+    delete filterStatusAktif[hash];
+    cekDataBaruBilaPerlu(JEDA_CEK_SAAT_PINDAH);
+  }
+  halamanKotor = false;
+
+  if (!store.siap) {
+    content.innerHTML = store.galatAwal ? htmlGagalMuat() : htmlKerangka();
+    document.getElementById('cobaMuatLagi')?.addEventListener('click', () => { store.galatAwal = ''; router({ ulang: true }); sinkronkan(); });
+    highlightActiveNav();
+    return;
+  }
 
   try {
-    if (hash === '#/dashboard') await renderDashboard(content);
-    else if (hash === '#/buat-nota') await renderBuatNota(content);
-    else if (hash === '#/nota-saya') await renderNotaList(content, {});
-    else if (hash === '#/menunggu-paraf') await renderNotaList(content, { status: 'Diajukan', title: 'Menunggu Paraf Saya', actionMode: 'mengetahui' });
-    else if (hash === '#/tinjau-persetujuan') await renderNotaList(content, { status: ST_DIPERIKSA, title: 'Tinjau Persetujuan' });
-    else if (hash === '#/periksa-stok') await renderNotaList(content, { status: 'Diketahui', title: 'Periksa Stok Barang' });
-    else if (hash === '#/serah-terima') await renderNotaList(content, { status: 'Diproses', title: 'Serah Terima Barang' });
-    else if (hash === '#/proses-barang') { location.hash = '#/serah-terima'; return; } // alamat menu lama
-    else if (hash.startsWith('#/detail/')) await renderDetail(content, decodeURIComponent(hash.split('#/detail/')[1]));
-    else if (hash.startsWith('#/edit-nota/')) await renderBuatNota(content, decodeURIComponent(hash.split('#/edit-nota/')[1]));
-    else if (hash === '#/laporan') await renderLaporan(content);
-    else if (hash === '#/data-master') await renderDataMaster(content);
-    else if (hash === '#/ganti-password') await renderGantiPassword(content);
-    else if (hash === '#/panduan') await renderPanduan(content);
+    if (hash === '#/dashboard') renderDashboard(content);
+    else if (hash === '#/buat-nota') renderBuatNota(content);
+    else if (hash === '#/nota-saya') renderNotaList(content, {});
+    else if (hash === '#/menunggu-paraf') renderNotaList(content, { status: 'Diajukan', title: 'Menunggu Paraf Saya', actionMode: 'mengetahui' });
+    else if (hash === '#/tinjau-persetujuan') renderNotaList(content, { status: ST_DIPERIKSA, title: 'Tinjau Persetujuan' });
+    else if (hash === '#/periksa-stok') renderNotaList(content, { status: 'Diketahui', title: 'Periksa Stok Barang' });
+    else if (hash === '#/serah-terima') renderNotaList(content, { status: 'Diproses', title: 'Serah Terima Barang' });
+    else if (hash.startsWith('#/detail/')) renderDetail(content, decodeURIComponent(hash.split('#/detail/')[1]));
+    else if (hash.startsWith('#/edit-nota/')) renderBuatNota(content, decodeURIComponent(hash.split('#/edit-nota/')[1]));
+    else if (hash === '#/laporan') renderLaporan(content);
+    else if (hash === '#/data-master') renderDataMaster(content);
+    else if (hash === '#/ganti-password') renderGantiPassword(content);
+    else if (hash === '#/panduan') renderPanduan(content);
     else content.innerHTML = '<div class="empty-state">Halaman tidak ditemukan.</div>';
   } catch (err) {
-    content.innerHTML = `<div class="empty-state">Gagal memuat halaman: ${err.message}</div>`;
+    content.innerHTML = `<div class="empty-state">Gagal menampilkan halaman: ${esc(err.message)}</div>`;
+    if (window.console) console.error(err);
   }
 
   highlightActiveNav();
+  if (!opsi.ulang) {
+    content.classList.remove('page-enter');
+    void content.offsetWidth; // mulai ulang animasi masuk
+    content.classList.add('page-enter');
+    gulirKe(0);
+  } else {
+    gulirKe(posisiGulir);
+  }
 }
-window.addEventListener('hashchange', router);
-window.addEventListener('DOMContentLoaded', () => { restoreSession(); router(); });
+
+function gulirKe(y) {
+  try { if (Math.abs((window.scrollY || 0) - y) > 1) window.scrollTo(0, y); } catch (err) { /* abaikan */ }
+}
+
+// Gambar ulang halaman aktif setelah data berubah — kecuali pengguna sedang
+// mengisi form (isiannya tidak boleh hilang). paksa = true setelah aksi pengguna sendiri.
+function renderUlangAman(paksa) {
+  if (!currentUser || !document.getElementById('page-content')) return;
+  const hash = location.hash || '#/dashboard';
+  if (hash === '#/login') return;
+  const masihKerangka = !!document.getElementById('kerangkaMuat') || !!document.getElementById('gagalMuat');
+  if (!paksa && !masihKerangka) {
+    if (document.getElementById('modalBackdrop')) return;
+    if (/^#\/(buat-nota|edit-nota\/|ganti-password)/.test(hash)) return;
+    if (halamanKotor) return;
+  }
+  router({ ulang: true });
+}
+
+window.addEventListener('hashchange', () => router());
+window.addEventListener('DOMContentLoaded', () => {
+  restoreSession();
+  if (isLoggedIn()) muatDataLokal(); // tampil seketika dari data tersimpan
+  router();
+  if (isLoggedIn()) sinkronkan();    // lalu periksa data terbaru di latar belakang
+});
 
 function highlightActiveNav() {
-  document.querySelectorAll('.nav-item').forEach(a => a.classList.toggle('active', a.getAttribute('href') === location.hash));
+  document.querySelectorAll('.nav-item, .mobile-nav a').forEach(a => a.classList.toggle('active', a.getAttribute('href') === location.hash));
+}
+
+// Kerangka halaman selama data pertama kali dimuat
+function htmlKerangka() {
+  const baris = '<div class="skeleton skeleton-line"></div>';
+  return `<div id="kerangkaMuat" aria-busy="true">
+    <div class="skeleton skeleton-hero"></div>
+    <div class="stats-grid">${'<div class="card"><div class="skeleton skeleton-line" style="width:40%;height:22px;"></div><div class="skeleton skeleton-line" style="width:70%;"></div></div>'.repeat(4)}</div>
+    <div class="card">${baris.repeat(6)}</div>
+    <div class="text-muted" style="text-align:center;font-size:12.5px;margin-top:1rem;">Menyiapkan data untuk pertama kali… berikutnya halaman akan langsung tampil.</div>
+  </div>`;
+}
+
+function htmlGagalMuat() {
+  const backendLama = /tidak dikenal: getBootstrap/.test(store.galatAwal);
+  const pesan = backendLama
+    ? 'Kode server (Apps Script) belum diperbarui ke versi cepat. Admin perlu memasang file .gs terbaru lalu membuat versi deployment baru.'
+    : store.galatAwal;
+  return `<div class="card empty-state" id="gagalMuat">
+    <div style="font-size:32px;">📡</div>
+    <p><b>Data belum bisa dimuat.</b><br>${esc(pesan)}</p>
+    <button class="btn btn-primary" id="cobaMuatLagi">Coba Lagi</button>
+  </div>`;
 }
 
 // ------------------------------------------------------------
@@ -182,6 +263,16 @@ function renderLogin() {
     btn.disabled = true; btn.textContent = 'Memproses...';
     try {
       await doLogin(document.getElementById('loginEmail').value, document.getElementById('loginPassword').value);
+      kosongkanStore();
+      const boot = window.paketAwalLogin;
+      window.paketAwalLogin = null;
+      if (boot && boot.data) {
+        terapkanDataServer(boot.versi, boot.data); // data ikut terkirim saat login: dashboard langsung tampil
+        store.terakhirSinkron = Date.now();
+      } else {
+        muatDataLokal();
+        sinkronkan();
+      }
       showToast('Login berhasil, selamat datang!');
       location.hash = '#/dashboard';
     } catch (err) { /* toast sudah tampil dari apiPost */ }
@@ -190,7 +281,8 @@ function renderLogin() {
 }
 
 // ------------------------------------------------------------
-// SHELL (sidebar + topbar) — dirender ulang tiap navigasi
+// SHELL (sidebar + topbar) — digambar sekali, lalu hanya isi halaman
+// yang berganti saat berpindah menu.
 // ------------------------------------------------------------
 function renderShell() {
   const navItems = NAV_ITEMS[currentUser.role] || [];
@@ -207,6 +299,7 @@ function renderShell() {
     <div class="main-area">
       <div class="topbar">
         <div class="topbar-search"><span>🔍</span><input placeholder="Cari no. nota atau barang..." id="globalSearch"></div>
+        <button type="button" class="sync-pill sync-ok" id="syncPill"><span class="sync-teks">✓ Tersinkron</span></button>
         <div class="topbar-user">
           <div style="text-align:right;">
             <div style="font-weight:600;font-size:13px;">${currentUser.nama}</div>
@@ -237,14 +330,42 @@ function renderShell() {
     </div>
   </div>`;
 
-  document.getElementById('logoutBtn').addEventListener('click', doLogout);
-  document.getElementById('logoutBtnMobile').addEventListener('click', doLogout);
-  document.getElementById('globalSearch').addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' && e.target.value.trim()) {
-      sessionSearchQuery = e.target.value.trim();
-      location.hash = '#/nota-saya';
-    }
+  const keluar = () => {
+    if (store.pending.size && !confirm('Masih ada perubahan yang sedang dikirim ke server. Keluar sekarang?')) return;
+    doLogout();
+  };
+  document.getElementById('logoutBtn').addEventListener('click', keluar);
+  document.getElementById('logoutBtnMobile').addEventListener('click', keluar);
+
+  // Pencarian: di halaman daftar nota hasilnya langsung tersaring saat mengetik
+  const cari = document.getElementById('globalSearch');
+  cari.value = sessionSearchQuery;
+  let timerCari = null;
+  cari.addEventListener('input', () => {
+    clearTimeout(timerCari);
+    timerCari = setTimeout(() => {
+      sessionSearchQuery = cari.value.trim();
+      if (RUTE_DAFTAR.includes(location.hash)) router({ ulang: true });
+    }, 200);
   });
+  cari.addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter') return;
+    clearTimeout(timerCari);
+    sessionSearchQuery = cari.value.trim();
+    if (RUTE_DAFTAR.includes(location.hash)) router({ ulang: true });
+    else if (sessionSearchQuery) location.hash = '#/nota-saya';
+  });
+
+  document.getElementById('syncPill').addEventListener('click', () => sinkronkan({ paksa: true, umumkan: true }));
+  aturIndikatorSinkron();
+
+  // Tandai halaman "sedang diisi" supaya pembaruan otomatis tidak menghapus isian
+  const pc = document.getElementById('page-content');
+  // (elemen yang sudah terlepas karena halaman baru saja digambar ulang diabaikan)
+  const diHalaman = (e) => e.target && pc.contains(e.target);
+  pc.addEventListener('input', (e) => { if (diHalaman(e)) halamanKotor = true; });
+  pc.addEventListener('change', (e) => { if (diHalaman(e)) halamanKotor = true; });
+  pc.addEventListener('click', (e) => { if (diHalaman(e) && e.target.closest && e.target.closest('.panel-aksi')) halamanKotor = true; });
 
   document.getElementById('mobileMenuBtn').addEventListener('click', (e) => {
     e.preventDefault();
@@ -261,11 +382,16 @@ window.closeMobileDrawer = function () {
 };
 let sessionSearchQuery = '';
 
+function nipSaya() {
+  const p = pegawaiDenganEmail(currentUser.email);
+  return String((p && p.NIP) || currentUser.nip || '');
+}
+
 // ------------------------------------------------------------
 // DASHBOARD
 // ------------------------------------------------------------
-async function renderDashboard(content) {
-  const res = await apiGet('getDashboard', { email: currentUser.email });
+function renderDashboard(content) {
+  const res = hitungDashboard();
   const s = res.stats, sc = res.stageCount;
   const subTindakan = {
     'Pemohon': 'Barang siap diambil',
@@ -313,35 +439,43 @@ function renderNotaTable(list, opts = {}) {
   const aksi = !!opts.aksiPemohon;
   return `<div class="table-wrap"><table class="data-table">
     <thead><tr><th>No. Nota</th><th>Tanggal</th><th>Bidang</th><th>Pemohon</th><th>Status</th>${aksi ? '<th>Aksi</th>' : ''}</tr></thead>
-    <tbody>${list.map(n => `
+    <tbody>${list.map(n => {
+      const sementara = notaSementara(n.NoNota);
+      const simpan = sedangDisimpan(n.NoNota);
+      return `
       <tr class="row-link" onclick="location.hash='#/detail/${encodeURIComponent(n.NoNota)}'">
-        <td class="no-nota-cell">${n.NoNota}</td>
+        <td class="no-nota-cell">${sementara ? '<span class="text-muted">⏳ Menunggu nomor…</span>' : esc(n.NoNota)}${simpan && !sementara ? ' <span class="pending-dot" title="Sedang disimpan ke server">⏳</span>' : ''}</td>
         <td>${fmtTgl(n.Tanggal, false)}</td>
         <td>${n.BidangNama}</td>
         <td>${n.PemohonNama}</td>
         <td>${statusBadge(n.Status)}</td>
-        ${aksi ? `<td style="white-space:nowrap;" onclick="event.stopPropagation()">${bisaDiubahPemohon(n)
+        ${aksi ? `<td style="white-space:nowrap;" onclick="event.stopPropagation()">${simpan
+          ? '<span class="text-muted" style="font-size:12px;">⏳ Menyimpan…</span>'
+          : bisaDiubahPemohon(n)
           ? `<a class="btn btn-outline btn-sm" href="#/edit-nota/${encodeURIComponent(n.NoNota)}">✏️ Edit</a>
              <button type="button" class="btn btn-danger btn-sm" onclick="hapusNotaPemohon('${encodeURIComponent(n.NoNota)}')">🗑️ Hapus</button>`
           : '<span class="text-muted" style="font-size:12px;" title="Nota sudah diproses sehingga tidak bisa diubah atau dihapus">🔒 Terkunci</span>'}</td>` : ''}
-      </tr>`).join('')}</tbody></table></div>`;
+      </tr>`;
+    }).join('')}</tbody></table></div>`;
 }
 
 // ------------------------------------------------------------
 // BUAT NOTA BARU  &  UBAH NOTA (editNoNota diisi = mode ubah)
 // Nota hanya bisa diubah oleh pemohonnya selama status masih Diajukan.
 // ------------------------------------------------------------
-async function renderBuatNota(content, editNoNota) {
-  const [master, detail] = await Promise.all([
-    apiGet('getMasterData', { jenis: 'semua' }),
-    editNoNota ? apiGet('getNotaDetail', { noNota: editNoNota, email: currentUser.email }) : Promise.resolve(null)
-  ]);
-  const barangList = master.barang;
+function renderBuatNota(content, editNoNota) {
+  const barangList = store.barang;
   const SATUAN_OPTIONS = ['Pcs', 'Unit', 'Buah', 'Rim', 'Lembar', 'Roll', 'Kotak', 'Set', 'Paket', 'Meter', 'Liter', 'Kg', 'Botol', 'Galon'];
+  const detail = editNoNota ? detailNotaLokal(editNoNota) : null;
+  if (editNoNota && !detail) {
+    content.innerHTML = `<div class="card" style="max-width:560px;"><h2 class="section-title">Nota tidak ditemukan</h2>
+      <p>Nota <b>${esc(editNoNota)}</b> tidak ada (mungkin sudah dihapus).</p><a href="#/nota-saya" class="btn btn-outline">← Kembali ke daftar nota</a></div>`;
+    return;
+  }
   const modeUbah = !!detail;
   const nota = modeUbah ? detail.nota : null;
 
-  if (modeUbah && !bisaDiubahPemohon(nota)) {
+  if (modeUbah && (!bisaDiubahPemohon(nota) || sedangDisimpan(nota.NoNota))) {
     content.innerHTML = `
     <div class="card" style="max-width:560px;">
       <h2 class="section-title">🔒 Nota tidak bisa diubah</h2>
@@ -351,14 +485,21 @@ async function renderBuatNota(content, editNoNota) {
     return;
   }
 
+  // Isian nota baru yang sebelumnya gagal terkirim dipulihkan
+  const draf = !modeUbah ? ambilDrafNota() : null;
+  const bidangTerpilih = draf && draf.bidangKode ? String(draf.bidangKode) : String(currentUser.bidangKode);
+
   const bidangField = modeUbah
     ? `<select id="fBidang" disabled><option value="${nota.BidangKode}">${nota.BidangNama}</option></select>
        <div class="text-muted" style="font-size:11.5px;margin-top:.3rem;">Bidang tidak bisa diganti karena sudah menjadi bagian nomor nota. Jika salah bidang, hapus nota ini lalu buat yang baru.</div>`
-    : `<select id="fBidang">${master.bidang.map(b => `<option value="${b.KodeBidang}" ${b.KodeBidang === currentUser.bidangKode ? 'selected' : ''}>${b.NamaBidang}</option>`).join('')}</select>`;
+    : `<select id="fBidang">${store.bidang.map(b => `<option value="${b.KodeBidang}" ${String(b.KodeBidang) === bidangTerpilih ? 'selected' : ''}>${b.NamaBidang}</option>`).join('')}</select>`;
 
   content.innerHTML = `
   ${modeUbah ? `<a href="#/detail/${encodeURIComponent(nota.NoNota)}" style="font-size:12.5px;">← Kembali</a>` : ''}
   <h2 class="section-title">${modeUbah ? '✏️ Ubah Nota ' + nota.NoNota : '➕ Ajukan Nota Permintaan Barang'}</h2>
+  ${draf && draf.items && draf.items.length ? `<div class="info-banner info-warning" style="display:flex;justify-content:space-between;align-items:center;gap:.75rem;flex-wrap:wrap;">
+    <span>📝 Isian nota yang belum terkonfirmasi terkirim sudah dipulihkan. Periksa lalu klik <b>Ajukan Nota</b> lagi — bila ternyata sudah tercatat, sistem tidak membuat nota ganda.</span>
+    <button type="button" class="btn btn-outline btn-sm" id="buangDrafBtn">Buang isian</button></div>` : ''}
   <div class="card">
     <div class="grid-2">
       <div class="field"><label>Bidang / Unit Kerja</label>${bidangField}</div>
@@ -384,7 +525,7 @@ async function renderBuatNota(content, editNoNota) {
       + `<option value="__lainnya__" ${selected && !inList ? 'selected' : ''}>Lainnya (ketik manual)</option>`;
   }
 
-  // isi (opsional) = { namaBarang, jumlah, satuan } untuk mode ubah
+  // isi (opsional) = { namaBarang, jumlah, satuan } untuk mode ubah / draf
   function addItemRow(isi) {
     itemCount++;
     const rowId = 'item_' + itemCount;
@@ -396,7 +537,7 @@ async function renderBuatNota(content, editNoNota) {
       <div class="field" style="margin-bottom:0;"><label>Nama Barang</label>
         <select class="itemBarang" onchange="autoFillSatuan(this)">
           <option value="">-- pilih --</option>
-          ${barangList.map(b => `<option value="${b.NamaBarang}" data-satuan="${b.Satuan}">${b.NamaBarang}</option>`).join('')}
+          ${barangList.map(b => `<option value="${esc(b.NamaBarang)}" data-satuan="${esc(b.Satuan)}">${esc(b.NamaBarang)}</option>`).join('')}
           <option value="__lainnya__">Lainnya (ketik manual)</option>
         </select>
         <input class="itemBarangManual" style="display:none;margin-top:.4rem;" placeholder="Nama barang lainnya">
@@ -444,11 +585,14 @@ async function renderBuatNota(content, editNoNota) {
   document.getElementById('addItemBtn').addEventListener('click', () => addItemRow());
   if (modeUbah && detail.items.length) {
     detail.items.forEach(it => addItemRow({ namaBarang: it.NamaBarang, jumlah: it.JumlahDiminta, satuan: it.Satuan }));
+  } else if (draf && draf.items && draf.items.length) {
+    draf.items.forEach(it => addItemRow(it));
   } else {
     addItemRow();
   }
+  document.getElementById('buangDrafBtn')?.addEventListener('click', () => { hapusDrafNota(); router({ ulang: true }); });
 
-  document.getElementById('submitNotaBtn').addEventListener('click', async () => {
+  document.getElementById('submitNotaBtn').addEventListener('click', () => {
     const items = [];
     let satuanKosong = false, jumlahSalah = false;
     itemsWrap.querySelectorAll('.grid-2').forEach(row => {
@@ -467,63 +611,110 @@ async function renderBuatNota(content, editNoNota) {
     if (jumlahSalah) return showToast('Jumlah setiap barang harus bilangan bulat minimal 1.', 'error');
     if (satuanKosong) return showToast('Pilih satuan untuk setiap barang.', 'error');
 
-    const btn = document.getElementById('submitNotaBtn');
-    const teksAsli = btn.textContent;
-    btn.disabled = true; btn.textContent = modeUbah ? 'Menyimpan...' : 'Mengirim...';
-    try {
-      const res = modeUbah
-        ? await apiPost('editNota', { noNota: nota.NoNota, pemohonEmail: currentUser.email, items })
-        : await apiPost('createNota', { pemohonEmail: currentUser.email, bidangKode: document.getElementById('fBidang').value, items });
-      showToast(res.message);
-      location.hash = '#/detail/' + encodeURIComponent(res.noNota);
-    } catch (err) { btn.disabled = false; btn.textContent = teksAsli; }
+    const itemLokal = (no) => items.map((it, k) => ({
+      ID: no + '-' + (k + 1), NoNota: no, NamaBarang: it.namaBarang, KodeBMN: '', Satuan: it.satuan,
+      JumlahDiminta: it.jumlah, JumlahDisetujui: '', StatusItem: '', Alasan: '', JumlahDiserahkan: '', KeteranganSerah: ''
+    }));
+
+    if (modeUbah) {
+      const no = String(nota.NoNota);
+      kirimInstan({
+        kunci: no, aksi: 'editNota',
+        data: { noNota: no, pemohonEmail: currentUser.email, items },
+        pesan: 'Perubahan nota berhasil disimpan.',
+        pindahKe: '#/detail/' + encodeURIComponent(no),
+        ubahLokal: () => {
+          store.items = store.items.filter(i => String(i.NoNota) !== no).concat(itemLokal(no));
+          logLokal(no, 'Ubah Nota', 'Daftar barang diperbarui oleh pemohon (' + items.length + ' barang).');
+        }
+      }).catch(() => {});
+      return;
+    }
+
+    // Nota baru langsung tampil dengan nomor sementara; nomor resmi dari server menyusul
+    const bidangKode = document.getElementById('fBidang').value;
+    const bidang = store.bidang.find(b => String(b.KodeBidang) === String(bidangKode));
+    // Draf yang dikirim ulang memakai tanda pengiriman yang sama, sehingga bila
+    // pengiriman pertama ternyata sudah tersimpan, server tidak membuat nota ganda.
+    const sementara = (draf && draf.idKlien && !sedangDisimpan(draf.idKlien)) ? draf.idKlien
+      : 'SEMENTARA-' + Date.now() + '-' + Math.random().toString(36).slice(2, 7);
+    const waktu = sekarangWib();
+    hapusDrafNota();
+    kirimInstan({
+      kunci: sementara, aksi: 'createNota',
+      data: { pemohonEmail: currentUser.email, bidangKode, items, idKlien: sementara },
+      pesan: 'Nota berhasil diajukan. Nomor nota sedang dibuat…',
+      pindahKe: '#/detail/' + encodeURIComponent(sementara),
+      ubahLokal: () => {
+        store.nota.push({
+          NoNota: sementara, Tanggal: waktu, TahunAnggaran: new Date().getFullYear(), BidangKode: bidangKode,
+          BidangNama: bidang ? bidang.NamaBidang : '', PemohonNama: currentUser.nama, PemohonNIP: nipSaya(),
+          PemohonEmail: currentUser.email, Tujuan: '', Status: 'Diajukan', CreatedAt: waktu
+        });
+        store.items = store.items.concat(itemLokal(sementara));
+        logLokal(sementara, 'Ajukan Nota', 'Nota dibuat dan diajukan ke atasan bidang.');
+      },
+      sesudahBerhasil: (res) => {
+        if (/sudah tercatat/.test(res.message || '')) showToast(res.message, 'success', 6000);
+        else if (res.noNota) showToast('Nota ' + res.noNota + ' berhasil diajukan.');
+      },
+      sesudahGagal: () => {
+        simpanDrafNota({ bidangKode, items, idKlien: sementara });
+        if (location.hash === '#/detail/' + encodeURIComponent(sementara)) location.hash = '#/buat-nota';
+      }
+    }).catch(() => {});
   });
 }
 
 // Pemohon boleh mengubah/menghapus nota MILIKNYA selama status masih Diajukan
 function bisaDiubahPemohon(n) {
-  return !!currentUser && currentUser.role === 'Pemohon' && n && n.Status === 'Diajukan'
+  return !!currentUser && currentUser.role === 'Pemohon' && n && n.Status === 'Diajukan' && !notaSementara(n.NoNota)
     && String(n.PemohonEmail || '').trim().toLowerCase() === String(currentUser.email || '').trim().toLowerCase();
 }
 
-window.hapusNotaPemohon = async function (noNotaEnc) {
+window.hapusNotaPemohon = function (noNotaEnc) {
   const noNota = decodeURIComponent(noNotaEnc);
+  if (sedangDisimpan(noNota)) return;
   if (!confirm('Hapus nota ' + noNota + '?\n\nNota beserta daftar barangnya akan dihapus permanen dan tidak bisa dikembalikan.')) return;
-  try {
-    const r = await apiPost('hapusNota', { noNota, pemohonEmail: currentUser.email });
-    showToast(r.message);
-    if (location.hash === '#/nota-saya') router(); else location.hash = '#/nota-saya';
-  } catch (err) { /* pesan error sudah tampil dari apiPost */ }
+  kirimInstan({
+    kunci: noNota, aksi: 'hapusNota',
+    data: { noNota, pemohonEmail: currentUser.email },
+    pesan: 'Nota ' + noNota + ' berhasil dihapus.',
+    pindahKe: '#/nota-saya',
+    ubahLokal: () => hapusNotaLokal(noNota)
+  }).catch(() => {});
 };
 
 // ------------------------------------------------------------
-// DAFTAR NOTA (dipakai untuk: Nota Saya, Menunggu Paraf, Tinjau Persetujuan, Proses Barang)
+// DAFTAR NOTA (dipakai untuk: Nota Saya, Menunggu Paraf, Tinjau Persetujuan, Periksa Stok, Serah Terima)
+// Filter & pencarian dihitung langsung dari data lokal.
 // ------------------------------------------------------------
-async function renderNotaList(content, opts) {
-  const params = { email: currentUser.email };
-  if (opts.status) params.status = opts.status;
-  if (sessionSearchQuery) { params.q = sessionSearchQuery; }
-  const res = await apiGet('getNotaList', params);
+function renderNotaList(content, opts) {
+  const hash = location.hash;
   const title = opts.title || 'Nota Saya';
+  const aksiPemohon = currentUser.role === 'Pemohon';
+  const statusAktif = filterStatusAktif[hash] || opts.status || 'Semua';
 
   content.innerHTML = `
   <div class="flex-between"><h2 class="section-title">${title}</h2>
-  ${sessionSearchQuery ? `<span class="text-muted">Pencarian: "${sessionSearchQuery}" <a href="#" id="clearSearch">✕ hapus</a></span>` : ''}</div>
+  ${sessionSearchQuery ? `<span class="text-muted">Pencarian: "${esc(sessionSearchQuery)}" <a href="#" id="clearSearch">✕ hapus</a></span>` : ''}</div>
   <div class="chip-row" id="statusFilter">
-    ${[['Semua', 'Semua']].concat(TAHAP.map(t => [t.status, t.label]), [['Ditolak', 'Ditolak']]).map(([s, lbl]) => `<span class="chip-filter ${s === (opts.status || 'Semua') ? 'active' : ''}" data-status="${s}">${lbl}</span>`).join('')}
+    ${[['Semua', 'Semua']].concat(TAHAP.map(t => [t.status, t.label]), [['Ditolak', 'Ditolak']]).map(([s, lbl]) => `<span class="chip-filter ${s === statusAktif ? 'active' : ''}" data-status="${s}">${lbl}</span>`).join('')}
   </div>
-  <div class="card">${renderNotaTable(res.data, { aksiPemohon: currentUser.role === 'Pemohon' })}</div>`;
+  <div class="card" id="kartuDaftarNota">${renderNotaTable(daftarNotaSaya(statusAktif, sessionSearchQuery), { aksiPemohon })}</div>`;
 
-  document.getElementById('clearSearch')?.addEventListener('click', (e) => { e.preventDefault(); sessionSearchQuery = ''; router(); });
+  document.getElementById('clearSearch')?.addEventListener('click', (e) => {
+    e.preventDefault();
+    sessionSearchQuery = '';
+    const cari = document.getElementById('globalSearch');
+    if (cari) cari.value = '';
+    router({ ulang: true });
+  });
   document.querySelectorAll('#statusFilter .chip-filter').forEach(chip => {
-    chip.addEventListener('click', async () => {
-      const status = chip.dataset.status;
-      const p = { email: currentUser.email };
-      if (status !== 'Semua') p.status = status;
-      if (sessionSearchQuery) p.q = sessionSearchQuery;
-      const r = await apiGet('getNotaList', p);
+    chip.addEventListener('click', () => {
+      filterStatusAktif[hash] = chip.dataset.status;
       document.querySelectorAll('#statusFilter .chip-filter').forEach(c => c.classList.toggle('active', c === chip));
-      content.querySelector('.card').innerHTML = renderNotaTable(r.data, { aksiPemohon: currentUser.role === 'Pemohon' });
+      document.getElementById('kartuDaftarNota').innerHTML = renderNotaTable(daftarNotaSaya(chip.dataset.status, sessionSearchQuery), { aksiPemohon });
     });
   });
 }
@@ -535,22 +726,42 @@ async function renderNotaList(content, opts) {
 //   Atasan Menyetujui  + Stok Diperiksa  -> setujui hasil pemeriksaan
 //   Perlengkapan       + Diproses        -> terbitkan Berita Acara Serah Terima
 // ------------------------------------------------------------
-async function renderDetail(content, noNota) {
-  const res = await apiGet('getNotaDetail', { noNota, email: currentUser.email });
+const _notaSudahDicari = new Set();
+function renderDetail(content, noNota) {
+  const res = detailNotaLokal(noNota);
+  if (!res) {
+    const cekDulu = !notaSementara(noNota) && !_notaSudahDicari.has(noNota);
+    content.innerHTML = `<div class="card empty-state">
+      <div style="font-size:30px;">🔎</div>
+      <p><b>Nota ${notaSementara(noNota) ? 'baru' : esc(noNota)} tidak ditemukan.</b><br>${cekDulu ? 'Sedang memeriksa data terbaru dari server…' : 'Nota ini mungkin sudah dihapus.'}</p>
+      <a href="#/nota-saya" class="btn btn-outline">← Kembali ke daftar nota</a></div>`;
+    if (cekDulu) {
+      _notaSudahDicari.add(noNota);
+      sinkronkan().then(() => renderUlangAman());
+    }
+    return;
+  }
+  _notaSudahDicari.delete(noNota);
   const n = res.nota, items = res.items, log = res.log;
+  const menyimpan = sedangDisimpan(n.NoNota);
+  const sementara = notaSementara(n.NoNota);
   const currentIdx = n.Status === 'Ditolak' ? -1 : TAHAP.findIndex(t => t.status === n.Status);
-  const adaBast = !!n.QRBastKiriKode;
+  const adaBast = !!(n.QRBastKiriKode || n.BastTanggal);
+  const qr = (kode, kosong) => kode ? 'QR: ' + kode : (menyimpan ? '⏳ QR sedang dibuat' : kosong);
 
   content.innerHTML = `
   <div class="flex-between" style="margin-bottom:1rem;">
     <div><a href="#/nota-saya" style="font-size:12.5px;">← Kembali</a>
-      <h2 class="section-title" style="margin:.2rem 0 0;">${n.NoNota}</h2></div>
+      <h2 class="section-title" style="margin:.2rem 0 0;">${sementara ? '⏳ Nomor nota sedang dibuat…' : n.NoNota}</h2></div>
     <div>${statusBadge(n.Status)}
-      <button class="btn btn-outline btn-sm" id="lihatPdfBtn">👁️ Lihat PDF</button>
-      <button class="btn btn-outline btn-sm" id="unduhPdfBtn">⬇️ Unduh PDF</button></div>
+      <button class="btn btn-outline btn-sm" id="lihatPdfBtn" ${menyimpan ? 'disabled title="Tunggu hingga tersimpan di server"' : ''}>👁️ Lihat PDF</button>
+      <button class="btn btn-outline btn-sm" id="unduhPdfBtn" ${menyimpan ? 'disabled title="Tunggu hingga tersimpan di server"' : ''}>⬇️ Unduh PDF</button></div>
   </div>
 
-  ${bisaDiubahPemohon(n) ? `<div class="info-banner info-warning" style="display:flex;justify-content:space-between;align-items:center;gap:.75rem;flex-wrap:wrap;">
+  ${menyimpan ? `<div class="info-banner info-simpan"><span class="loading-spin" style="width:14px;height:14px;vertical-align:-2px;"></span>
+    <b>Sedang disimpan ke server…</b> Perubahan sudah tercatat di layar ini. Anda boleh berpindah halaman; status akan diperbarui otomatis.</div>` : ''}
+
+  ${!menyimpan && bisaDiubahPemohon(n) ? `<div class="info-banner info-warning" style="display:flex;justify-content:space-between;align-items:center;gap:.75rem;flex-wrap:wrap;">
     <span>✏️ Nota ini belum diparaf atasan, jadi masih bisa Anda ubah atau hapus.</span>
     <span style="white-space:nowrap;"><a class="btn btn-outline btn-sm" href="#/edit-nota/${encodeURIComponent(n.NoNota)}">✏️ Edit Nota</a>
       <button type="button" class="btn btn-danger btn-sm" id="hapusNotaBtn">🗑️ Hapus Nota</button></span>
@@ -566,7 +777,7 @@ async function renderDetail(content, noNota) {
           <tr><td class="text-muted">Pejabat Pemohon</td><td><b>${n.PemohonNama}</b> (NIP. ${n.PemohonNIP})</td></tr>
           <tr><td class="text-muted">Tanggal Pengajuan</td><td>${fmtTgl(n.Tanggal)}</td></tr>
           ${n.PemeriksaNama ? `<tr><td class="text-muted">Pemeriksaan Stok</td><td>${n.PemeriksaNama} · ${fmtTgl(n.TglDiperiksa)}${n.HasilPersetujuan ? ' · <b>' + n.HasilPersetujuan + '</b>' : ''}</td></tr>` : ''}
-          ${n.CatatanPemeriksaan ? `<tr><td class="text-muted">Catatan Perlengkapan</td><td>${n.CatatanPemeriksaan}</td></tr>` : ''}
+          ${n.CatatanPemeriksaan ? `<tr><td class="text-muted">Catatan Perlengkapan</td><td>${esc(n.CatatanPemeriksaan)}</td></tr>` : ''}
         </table>
       </div>
 
@@ -576,27 +787,27 @@ async function renderDetail(content, noNota) {
           <thead><tr><th>Barang</th><th>Satuan</th><th>Diminta</th><th>Disetujui</th>${adaBast ? '<th>Diserahkan</th>' : ''}<th>Keputusan</th><th>Catatan</th></tr></thead>
           <tbody id="itemsBody">${items.map(it => `
             <tr>
-              <td>${it.NamaBarang}</td>
-              <td>${it.Satuan}</td><td>${it.JumlahDiminta}</td><td>${it.StatusItem ? it.JumlahDisetujui : '-'}</td>
+              <td>${esc(it.NamaBarang)}</td>
+              <td>${esc(it.Satuan)}</td><td>${it.JumlahDiminta}</td><td>${it.StatusItem ? it.JumlahDisetujui : '-'}</td>
               ${adaBast ? `<td><b>${jumlahDiserahkan(it)}</b>${it.KeteranganSerah ? `<div class="text-muted" style="font-size:11px;">${esc(it.KeteranganSerah)}</div>` : ''}</td>` : ''}
               <td>${it.StatusItem ? statusBadge(it.StatusItem === 'Penuh' ? 'Selesai' : it.StatusItem === 'Ditolak' ? 'Ditolak' : 'Diproses') + ' ' + it.StatusItem : '<span class="text-muted">Menunggu</span>'}</td>
-              <td>${it.Alasan || '-'}</td>
+              <td>${esc(it.Alasan) || '-'}</td>
             </tr>`).join('')}</tbody>
         </table></div>
       </div>
 
-      ${renderAksiRole(n, items, res)}
+      ${menyimpan ? '' : `<div class="panel-aksi">${renderAksiRole(n, items, res)}</div>`}
 
       <h3 class="section-title" style="font-size:14px;margin:1.5rem 0 0;">Tanda Tangan Nota Permintaan</h3>
       <div class="dual-auth" style="margin-top:.75rem;">
         <div class="auth-box"><div class="text-muted" style="font-size:11px;font-weight:600;">Mengetahui,</div>
           <div style="font-weight:600;">${formatJabatanKepalaBidang(n.BidangNama)}</div>
-          <div class="qr-placeholder">${n.QRKiriKode ? 'QR: ' + n.QRKiriKode : 'Belum diparaf'}</div>
+          <div class="qr-placeholder">${n.AtasanMengetahuiNama ? qr(n.QRKiriKode, 'Belum diparaf') : 'Belum diparaf'}</div>
           <div style="font-size:12.5px;">${n.AtasanMengetahuiNama || '-'}</div>
           <div class="text-muted" style="font-size:11px;">${n.TglDiketahui ? fmtTgl(n.TglDiketahui) : ''}</div></div>
         <div class="auth-box"><div class="text-muted" style="font-size:11px;font-weight:600;">Menyetujui,</div>
           <div style="font-weight:600;">Sekretaris Dinas Perhubungan Provinsi Riau</div>
-          <div class="qr-placeholder">${n.QRKananKode ? 'QR: ' + n.QRKananKode : 'Belum disetujui'}</div>
+          <div class="qr-placeholder">${n.AtasanMenyetujuiNama ? qr(n.QRKananKode, 'Belum disetujui') : 'Belum disetujui'}</div>
           <div style="font-size:12.5px;">${n.AtasanMenyetujuiNama || '-'}</div>
           <div class="text-muted" style="font-size:11px;">${n.TglDisetujui ? fmtTgl(n.TglDisetujui) : ''}</div></div>
       </div>
@@ -606,12 +817,12 @@ async function renderDetail(content, noNota) {
       <div class="text-muted" style="font-size:12.5px;">Diterbitkan ${fmtTgl(n.BastTanggal)} · tercantum di halaman 2 PDF</div>
       <div class="dual-auth" style="margin-top:.75rem;">
         <div class="auth-box"><div class="text-muted" style="font-size:11px;font-weight:600;">PIHAK KEDUA (yang menerima)</div>
-          <div class="qr-placeholder">QR: ${n.QRBastKiriKode}</div>
+          <div class="qr-placeholder">${qr(n.QRBastKiriKode, '-')}</div>
           <div style="font-weight:600;font-size:12.5px;">${n.BastPihakKeduaNama || '-'}</div>
           <div class="text-muted" style="font-size:11px;">NIP. ${n.BastPihakKeduaNIP || '-'}</div>
           ${n.BastPihakKeduaNama && n.BastPihakKeduaNama !== n.PemohonNama ? `<div class="text-muted" style="font-size:11px;margin-top:.25rem;">mewakili pemohon ${n.PemohonNama}</div>` : ''}</div>
         <div class="auth-box"><div class="text-muted" style="font-size:11px;font-weight:600;">PIHAK PERTAMA (yang menyerahkan)</div>
-          <div class="qr-placeholder">QR: ${n.QRBastKananKode}</div>
+          <div class="qr-placeholder">${qr(n.QRBastKananKode, '-')}</div>
           <div style="font-weight:600;font-size:12.5px;">${n.BastPihakPertamaNama || '-'}</div>
           <div class="text-muted" style="font-size:11px;">NIP. ${n.BastPihakPertamaNIP || '-'}</div></div>
       </div>` : ''}
@@ -631,44 +842,25 @@ async function renderDetail(content, noNota) {
 
       <div class="card">
         <h3 class="section-title" style="font-size:14px;">Log Riwayat Dokumen</h3>
-        ${log.length ? log.map(l => `<div class="timeline-item"><div class="timeline-dot"></div><div><b>${l.Aksi}</b> — ${l.Aktor}<br><span class="text-muted">${l.Keterangan}</span><br><span class="text-muted">${fmtTgl(l.Timestamp)}</span></div></div>`).join('') : '<div class="text-muted">Belum ada riwayat.</div>'}
+        ${log.length ? log.map(l => `<div class="timeline-item"><div class="timeline-dot${l._lokal ? ' timeline-dot-pending' : ''}"></div><div><b>${esc(l.Aksi)}</b> — ${esc(l.Aktor)}<br><span class="text-muted">${esc(l.Keterangan)}</span><br><span class="text-muted">${fmtTgl(l.Timestamp)}${l._lokal ? ' · menyimpan…' : ''}</span></div></div>`).join('') : '<div class="text-muted">Belum ada riwayat.</div>'}
       </div>
     </div>
   </div>`;
 
-  document.getElementById('lihatPdfBtn').addEventListener('click', async () => {
-    const btn = document.getElementById('lihatPdfBtn');
-    btn.disabled = true; btn.textContent = 'Memuat...';
-    try {
-      const pdf = await apiGet('getPdf', { noNota });
-      const blobUrl = base64ToBlobUrl(pdf.base64, 'application/pdf');
-      openPdfModal(blobUrl, n.NoNota);
-    } catch (err) { /* toast sudah tampil dari apiGet */ }
-    btn.disabled = false; btn.textContent = '👁️ Lihat PDF';
-  });
-
-  document.getElementById('unduhPdfBtn').addEventListener('click', async () => {
-    try {
-      const pdf = await apiGet('getPdf', { noNota });
-      const link = document.createElement('a');
-      link.href = 'data:application/pdf;base64,' + pdf.base64;
-      link.download = pdf.filename;
-      link.click();
-    } catch (err) {}
-  });
-
+  document.getElementById('lihatPdfBtn').addEventListener('click', () => lihatPdfNota(n.NoNota));
+  document.getElementById('unduhPdfBtn').addEventListener('click', () => unduhPdfNota(n.NoNota));
   document.getElementById('hapusNotaBtn')?.addEventListener('click', () => hapusNotaPemohon(encodeURIComponent(n.NoNota)));
 
-  attachDetailActionHandlers(n, items, res);
+  if (!menyimpan) attachDetailActionHandlers(n, items, res);
 }
 
-// Pesan singkat di atas detail nota sesuai kondisinya
 // Jumlah yang benar-benar diserahkan (berita acara lama: sama dengan yang disetujui)
 function jumlahDiserahkan(it) {
   const kosong = v => v === '' || v === null || v === undefined;
   return kosong(it.JumlahDiserahkan) ? (kosong(it.JumlahDisetujui) ? 0 : Number(it.JumlahDisetujui)) : Number(it.JumlahDiserahkan);
 }
 
+// Pesan singkat di atas detail nota sesuai kondisinya
 function renderBannerStatus(n, items) {
   if (n.Status === 'Ditolak' && n.AlasanPembatalan) {
     return `<div class="info-banner info-danger">❌ <b>Serah terima dibatalkan</b> karena stok tidak tersedia saat pengambilan. Alasan: ${esc(n.AlasanPembatalan)}. Silakan ajukan nota baru bila masih diperlukan.</div>`;
@@ -676,7 +868,7 @@ function renderBannerStatus(n, items) {
   if (n.Status === 'Ditolak') {
     const alasan = n.PemeriksaNama
       ? 'Seluruh barang tidak dapat dipenuhi Bagian Perlengkapan. Alasan per barang ada di tabel Daftar Barang.'
-      : 'Ditolak atasan bidang. Catatan: ' + (n.CatatanMengetahui || '-');
+      : 'Ditolak atasan bidang. Catatan: ' + esc(n.CatatanMengetahui || '-');
     return `<div class="info-banner info-danger">❌ <b>Nota ditolak.</b> ${alasan} Silakan ajukan nota baru bila masih diperlukan.</div>`;
   }
   if (n.Status === 'Diproses' && currentUser.role === 'Pemohon') {
@@ -692,10 +884,26 @@ function renderBannerStatus(n, items) {
   return '';
 }
 
+// Daftar pegawai yang bisa dipilih sebagai penerima barang (selain pemohon sendiri).
+// Semua pegawai yang punya nama ikut tampil, termasuk yang belum punya email.
+function daftarCalonPenerima(pemohon) {
+  const emailPemohon = normTeks(pemohon.email);
+  const namaPemohon = normTeks(pemohon.nama);
+  const nipPemohon = String(pemohon.nip || '').trim();
+  return store.pegawai
+    .filter(p => String(p.Nama || '').trim())
+    .filter(p => {
+      const email = normTeks(p.Email);
+      if (email) return email !== emailPemohon;
+      return !(normTeks(p.Nama) === namaPemohon && String(p.NIP || '').trim() === nipPemohon);
+    })
+    .sort((a, b) => String(a.Nama).localeCompare(String(b.Nama)));
+}
+
 function renderAksiRole(n, items, res) {
   const role = currentUser.role;
 
-  if (role === 'Atasan Mengetahui' && n.Status === 'Diajukan') {
+  if (role === 'Atasan Mengetahui' && n.Status === 'Diajukan' && !notaSementara(n.NoNota)) {
     return `<div class="card" style="margin-bottom:1rem;">
       <h3 class="section-title" style="font-size:14px;">Tindakan: Paraf Mengetahui</h3>
       <div class="field"><label>Catatan (opsional)</label><textarea id="catatanMengetahui" placeholder="mis. Disetujui sesuai kuota."></textarea></div>
@@ -712,8 +920,8 @@ function renderAksiRole(n, items, res) {
       <div id="reviewItems">${items.map(it => {
         const d = Number(it.JumlahDiminta) || 0;
         return `
-        <div class="item-review" data-id="${it.ID}" data-diminta="${d}">
-          <div class="item-review-head"><b>${it.NamaBarang}</b><span class="text-muted">Diminta: ${d} ${it.Satuan}</span></div>
+        <div class="item-review" data-id="${esc(it.ID)}" data-diminta="${d}">
+          <div class="item-review-head"><b>${esc(it.NamaBarang)}</b><span class="text-muted">Diminta: ${d} ${esc(it.Satuan)}</span></div>
           <div class="decision-options">
             <button type="button" class="decision-btn" data-decision="Penuh">✅ Disetujui Penuh</button>
             ${d > 1 ? '<button type="button" class="decision-btn" data-decision="Sebagian">⚠️ Disetujui Sebagian</button>' : ''}
@@ -741,7 +949,8 @@ function renderAksiRole(n, items, res) {
     const v = res.viewer || { nama: currentUser.nama, nip: currentUser.nip, jabatan: '' };
     const now = new Date();
     const tglHariIni = HARI_ID[now.getDay()] + ', ' + now.getDate() + ' ' + BULAN_ID[now.getMonth()] + ' ' + now.getFullYear();
-    const pemohon = { nama: n.PemohonNama, nip: n.PemohonNIP, jabatan: res.pemohonJabatan };
+    const pemohon = { nama: n.PemohonNama, nip: n.PemohonNIP, jabatan: res.pemohonJabatan, email: n.PemohonEmail };
+    const calon = daftarCalonPenerima(pemohon);
     return `<div class="card" style="margin-bottom:1rem;">
       <h3 class="section-title" style="font-size:14px;">Tindakan: Terbitkan Berita Acara Serah Terima</h3>
       <p class="text-muted" style="font-size:12.5px;margin:-.25rem 0 .75rem;">Terbitkan setelah barang diterima. Tanggal berita acara otomatis mengikuti hari ini.</p>
@@ -770,7 +979,7 @@ function renderAksiRole(n, items, res) {
       </label>
       <div id="wakilWrap" style="display:none;margin-top:.75rem;">
         <div class="field"><label>Penerima barang</label>
-          <select id="wakilPilih"><option value="">Memuat daftar pegawai...</option></select></div>
+          <select id="wakilPilih"><option value="">-- pilih pegawai --</option>${calon.map((p, i) => `<option value="${i}">${esc(p.Nama)}${p.Jabatan ? ' — ' + esc(p.Jabatan) : ''}</option>`).join('')}<option value="__manual__">Tidak terdaftar di sistem (isi manual)</option></select></div>
         <div id="wakilManual" style="display:none;">
           <div class="grid-2">
             <div class="field"><label>Nama penerima</label><input id="wakilNama"></div>
@@ -804,32 +1013,34 @@ function htmlPihakBast(p) {
   return `<b>${esc(p.nama)}</b><br>NIP. ${esc(p.nip) || '-'}<br>${p.jabatan ? esc(p.jabatan) : '<span class="text-danger">Jabatan belum diisi</span>'}`;
 }
 
-// Jalankan satu aksi: tombol dikunci selama proses, lalu halaman dimuat ulang.
-async function jalankanAksi(btnId, teksProses, kirim) {
-  const btn = document.getElementById(btnId);
-  const teksAsli = btn.textContent;
-  btn.disabled = true; btn.textContent = teksProses;
-  try {
-    const r = await kirim();
-    showToast(r.message);
-    router();
-  } catch (err) {
-    btn.disabled = false; btn.textContent = teksAsli; // pesan error sudah tampil dari apiPost
-  }
+// Aksi pada satu nota: hasilnya langsung tampil, pengiriman ke server di latar belakang
+function aksiNotaInstan(n, aksi, data, pesan, ubahNota) {
+  return kirimInstan({ kunci: n.NoNota, aksi, data, pesan, ubahLokal: ubahNota }).catch(() => {});
 }
 
 function attachDetailActionHandlers(n, items, res) {
+  const nilai = (id) => (document.getElementById(id) ? document.getElementById(id).value.trim() : '');
+
   // --- Atasan Mengetahui ---
   document.getElementById('btnSetujuiMengetahui')?.addEventListener('click', () => {
-    jalankanAksi('btnSetujuiMengetahui', 'Memproses...', () => apiPost('approveMengetahui', {
-      noNota: n.NoNota, atasanEmail: currentUser.email, disetujui: true, catatan: document.getElementById('catatanMengetahui').value
-    }));
+    const catatan = nilai('catatanMengetahui');
+    aksiNotaInstan(n, 'approveMengetahui', { noNota: n.NoNota, atasanEmail: currentUser.email, disetujui: true, catatan },
+      'Nota berhasil diparaf (mengetahui) dan diteruskan ke Bagian Perlengkapan.', () => {
+        Object.assign(n, {
+          Status: 'Diketahui', AtasanMengetahuiNama: currentUser.nama, AtasanMengetahuiNIP: nipSaya(),
+          TglDiketahui: sekarangWib(), CatatanMengetahui: catatan || 'Disetujui sesuai kuota.', QRKiriKode: ''
+        });
+        logLokal(n.NoNota, 'Paraf Mengetahui', catatan || '-');
+      });
   });
   document.getElementById('btnTolakMengetahui')?.addEventListener('click', () => {
     if (!confirm('Yakin ingin menolak nota ini?')) return;
-    jalankanAksi('btnTolakMengetahui', 'Memproses...', () => apiPost('approveMengetahui', {
-      noNota: n.NoNota, atasanEmail: currentUser.email, disetujui: false, catatan: document.getElementById('catatanMengetahui').value
-    }));
+    const catatan = nilai('catatanMengetahui');
+    aksiNotaInstan(n, 'approveMengetahui', { noNota: n.NoNota, atasanEmail: currentUser.email, disetujui: false, catatan },
+      'Nota ditolak.', () => {
+        Object.assign(n, { Status: 'Ditolak', CatatanMengetahui: catatan || 'Ditolak oleh atasan bidang.' });
+        logLokal(n.NoNota, 'Tolak (Mengetahui)', catatan || '-');
+      });
   });
 
   // --- Perlengkapan: pilih keputusan tiap barang ---
@@ -861,38 +1072,64 @@ function attachDetailActionHandlers(n, items, res) {
         id: card.dataset.id,
         statusItem: keputusan,
         jumlahDisetujui: keputusan === 'Sebagian' ? jumlah : '',
-        alasan: keputusan === 'Penuh' ? '' : alasan
+        alasan: keputusan === 'Penuh' ? '' : alasan,
+        diminta: diminta
       });
     }
-    if (payload.every(p => p.statusItem === 'Ditolak') &&
-      !confirm('Semua barang ditolak. Nota akan berstatus Ditolak dan tidak diteruskan ke Sekretaris. Lanjutkan?')) return;
-    jalankanAksi('btnSimpanPemeriksaan', 'Menyimpan...', () => apiPost('periksaStok', {
-      noNota: n.NoNota, petugasEmail: currentUser.email, items: payload,
-      catatan: document.getElementById('catatanPemeriksaan').value
-    }));
+    const semuaDitolak = payload.every(p => p.statusItem === 'Ditolak');
+    if (semuaDitolak && !confirm('Semua barang ditolak. Nota akan berstatus Ditolak dan tidak diteruskan ke Sekretaris. Lanjutkan?')) return;
+    const semuaPenuh = payload.every(p => p.statusItem === 'Penuh');
+    const hasil = semuaDitolak ? 'Ditolak' : semuaPenuh ? 'Disetujui Penuh' : 'Disetujui Sebagian';
+    const catatan = nilai('catatanPemeriksaan');
+    aksiNotaInstan(n, 'periksaStok', {
+      noNota: n.NoNota, petugasEmail: currentUser.email, catatan,
+      items: payload.map(p => ({ id: p.id, statusItem: p.statusItem, jumlahDisetujui: p.jumlahDisetujui, alasan: p.alasan }))
+    }, semuaDitolak
+      ? 'Semua barang ditolak, nota berstatus Ditolak dan pemohon telah diberi tahu.'
+      : 'Hasil pemeriksaan stok tersimpan (' + hasil + '). Nota diteruskan ke Sekretaris.', () => {
+      payload.forEach(p => {
+        const it = items.find(x => String(x.ID) === String(p.id));
+        if (!it) return;
+        it.StatusItem = p.statusItem;
+        it.JumlahDisetujui = p.statusItem === 'Penuh' ? p.diminta : p.statusItem === 'Ditolak' ? 0 : p.jumlahDisetujui;
+        it.Alasan = p.alasan;
+      });
+      Object.assign(n, {
+        PemeriksaNama: currentUser.nama, PemeriksaNIP: nipSaya(), TglDiperiksa: sekarangWib(),
+        CatatanPemeriksaan: catatan, HasilPersetujuan: hasil, Status: semuaDitolak ? 'Ditolak' : ST_DIPERIKSA
+      });
+      logLokal(n.NoNota, 'Periksa Stok', semuaDitolak ? 'Semua barang ditolak. Nota berstatus Ditolak.' : 'Hasil pemeriksaan: ' + hasil + '.');
+    });
   });
 
   // --- Atasan Menyetujui ---
   document.getElementById('btnSetujuiSekretaris')?.addEventListener('click', () => {
     if (!confirm('Setujui nota ini? QR tanda tangan kanan akan terbit dan pemohon diberi tahu untuk mengambil barang.')) return;
-    jalankanAksi('btnSetujuiSekretaris', 'Memproses...', () => apiPost('approveMenyetujui', {
-      noNota: n.NoNota, atasanEmail: currentUser.email, catatan: document.getElementById('catatanMenyetujui').value
-    }));
+    const catatan = nilai('catatanMenyetujui');
+    aksiNotaInstan(n, 'approveMenyetujui', { noNota: n.NoNota, atasanEmail: currentUser.email, catatan },
+      'Nota disetujui. QR tanda tangan kanan terbit dan pemohon diberi tahu untuk mengambil barang.', () => {
+        const waktu = sekarangWib();
+        Object.assign(n, {
+          Status: 'Diproses', AtasanMenyetujuiNama: currentUser.nama, AtasanMenyetujuiNIP: nipSaya(),
+          TglDisetujui: waktu, TglDiproses: waktu, CatatanDisetujui: catatan, QRKananKode: ''
+        });
+        logLokal(n.NoNota, 'Setujui (Menyetujui)', 'Menyetujui hasil pemeriksaan stok: ' + (n.HasilPersetujuan || 'Disetujui') + '.');
+      });
   });
 
   // --- Perlengkapan: Berita Acara Serah Terima (penerima bisa diwakilkan) ---
   const cbWakil = document.getElementById('cbDiwakilkan');
   if (cbWakil) {
     const pemohon = { nama: n.PemohonNama, nip: n.PemohonNIP, jabatan: res.pemohonJabatan, email: n.PemohonEmail };
-    const jabatanPertama = (res.viewer || {}).jabatan;
+    const pertama = res.viewer || { nama: currentUser.nama, nip: currentUser.nip, jabatan: '' };
+    const jabatanPertama = pertama.jabatan;
     const sel = document.getElementById('wakilPilih');
-    const nilai = (id) => document.getElementById(id).value.trim();
-    let daftarPegawai = null;
+    const daftarPegawai = daftarCalonPenerima(pemohon);
 
     const penerimaSaatIni = () => {
       if (!cbWakil.checked) return Object.assign({ mode: 'pemohon' }, pemohon);
       if (sel.value === '__manual__') return { mode: 'manual', nama: nilai('wakilNama'), nip: nilai('wakilNip'), jabatan: nilai('wakilJabatan') };
-      const p = sel.value === '' ? null : (daftarPegawai || [])[Number(sel.value)];
+      const p = sel.value === '' ? null : daftarPegawai[Number(sel.value)];
       return p ? { mode: 'pegawai', email: p.Email || '', nama: p.Nama, nip: p.NIP || '', jabatan: p.Jabatan || '' } : { mode: 'kosong' };
     };
     const perbarui = () => {
@@ -907,33 +1144,8 @@ function attachDetailActionHandlers(n, items, res) {
       document.getElementById('bannerJabatan').style.display = (!jabatanPertama || jabatanKeduaKosong) ? 'block' : 'none';
     };
 
-    cbWakil.addEventListener('change', async () => {
+    cbWakil.addEventListener('change', () => {
       document.getElementById('wakilWrap').style.display = cbWakil.checked ? 'block' : 'none';
-      if (cbWakil.checked && !daftarPegawai) {
-        const opsiManual = '<option value="__manual__">Tidak terdaftar di sistem (isi manual)</option>';
-        try {
-          const r = await apiGet('getMasterData', { jenis: 'pegawai' });
-          const emailPemohon = String(pemohon.email || '').trim().toLowerCase();
-          // Semua pegawai yang punya nama ikut tampil, termasuk yang belum punya email.
-          // Hanya pemohon sendiri yang tidak dimasukkan (ia pilihan bawaan).
-          const namaPemohon = String(pemohon.nama || '').trim().toLowerCase();
-          const nipPemohon = String(pemohon.nip || '').trim();
-          daftarPegawai = r.data
-            .filter(p => String(p.Nama || '').trim())
-            .filter(p => {
-              const email = String(p.Email || '').trim().toLowerCase();
-              if (email) return email !== emailPemohon;
-              return !(String(p.Nama).trim().toLowerCase() === namaPemohon && String(p.NIP || '').trim() === nipPemohon);
-            })
-            .sort((a, b) => String(a.Nama).localeCompare(String(b.Nama)));
-          sel.innerHTML = '<option value="">-- pilih pegawai --</option>'
-            + daftarPegawai.map((p, i) => `<option value="${i}">${esc(p.Nama)}${p.Jabatan ? ' — ' + esc(p.Jabatan) : ''}</option>`).join('')
-            + opsiManual;
-        } catch (err) {
-          daftarPegawai = [];
-          sel.innerHTML = '<option value="">-- pilih --</option>' + opsiManual;
-        }
-      }
       perbarui();
     });
     sel.addEventListener('change', perbarui);
@@ -987,10 +1199,29 @@ function attachDetailActionHandlers(n, items, res) {
       const penerima = p.mode === 'pemohon' ? { mode: 'pemohon' }
         : p.mode === 'pegawai' ? { mode: 'pegawai', email: p.email, nip: p.nip, nama: p.nama }
         : { mode: 'manual', nama: p.nama, nip: p.nip, jabatan: p.jabatan };
-      jalankanAksi('btnTerbitkanBast', 'Menerbitkan... (membuat PDF, mohon tunggu)', () => apiPost('terbitkanBast', {
+      const mewakili = p.mode !== 'pemohon';
+      const pihakKedua = mewakili ? p : pemohon;
+      aksiNotaInstan(n, 'terbitkanBast', {
         noNota: n.NoNota, petugasEmail: currentUser.email, penerima,
         serah: serah.hasil.map(h => ({ id: h.id, jumlahDiserahkan: h.jumlahDiserahkan, keterangan: h.keterangan }))
-      }));
+      }, 'Berita Acara Serah Terima terbit' + (mewakili ? ' (penerima: ' + p.nama + ', mewakili pemohon)' : '') +
+        (kurang.length ? '. ' + kurang.length + ' barang tidak diserahkan penuh' : '') + '. Status nota menjadi Selesai.', () => {
+        const waktu = sekarangWib();
+        items.forEach(it => {
+          const h = serah.hasil.find(x => String(x.id) === String(it.ID));
+          it.JumlahDiserahkan = h ? h.jumlahDiserahkan : (Number(it.JumlahDisetujui) || 0);
+          it.KeteranganSerah = h ? h.keterangan : '';
+        });
+        Object.assign(n, {
+          Status: 'Selesai', TglSelesai: waktu, PetugasGudang: currentUser.nama, BastTanggal: waktu,
+          BastPihakPertamaNama: pertama.nama, BastPihakPertamaNIP: pertama.nip, BastPihakPertamaJabatan: pertama.jabatan || '',
+          BastPihakKeduaNama: pihakKedua.nama, BastPihakKeduaNIP: pihakKedua.nip || '', BastPihakKeduaJabatan: pihakKedua.jabatan || '',
+          QRBastKiriKode: '', QRBastKananKode: ''
+        });
+        logLokal(n.NoNota, 'Terbitkan Berita Acara', mewakili
+          ? 'Barang diterima oleh ' + p.nama + ' mewakili pemohon (' + pemohon.nama + ').'
+          : 'Barang diserahkan kepada ' + pemohon.nama + '.');
+      });
     });
 
     // Semua stok habis saat diambil -> batalkan serah terima
@@ -999,21 +1230,23 @@ function attachDetailActionHandlers(n, items, res) {
       w.style.display = w.style.display === 'none' ? 'block' : 'none';
     });
     document.getElementById('btnKonfirmasiBatal').addEventListener('click', () => {
-      const alasan = document.getElementById('alasanBatal').value.trim();
+      const alasan = nilai('alasanBatal');
       if (!alasan) return showToast('Isi alasan pembatalan.', 'error');
       if (!confirm('Batalkan serah terima nota ini?\n\nNota akan berstatus Ditolak dan pemohon diberi tahu. Tindakan ini tidak bisa diurungkan.')) return;
-      jalankanAksi('btnKonfirmasiBatal', 'Membatalkan...', () => apiPost('batalkanSerahTerima', {
-        noNota: n.NoNota, petugasEmail: currentUser.email, alasan
-      }));
+      aksiNotaInstan(n, 'batalkanSerahTerima', { noNota: n.NoNota, petugasEmail: currentUser.email, alasan },
+        'Serah terima dibatalkan. Nota berstatus Ditolak dan pemohon telah diberi tahu.', () => {
+          Object.assign(n, { Status: 'Ditolak', AlasanPembatalan: alasan, PetugasGudang: currentUser.nama });
+          logLokal(n.NoNota, 'Batalkan Serah Terima', 'Stok tidak tersedia saat pengambilan. Alasan: ' + alasan);
+        });
     });
   }
 }
 
 // ------------------------------------------------------------
-// LAPORAN & REKAP
+// LAPORAN & REKAP (dihitung langsung dari data lokal)
 // ------------------------------------------------------------
-async function renderLaporan(content) {
-  const res = await apiGet('getLaporan', {});
+function renderLaporan(content) {
+  const res = hitungLaporan();
   content.innerHTML = `
   <h2 class="section-title">📊 Laporan & Rekapitulasi</h2>
   <div class="stats-grid">
@@ -1028,15 +1261,15 @@ async function renderLaporan(content) {
     </div>
     <div class="card">
       <h3 class="section-title" style="font-size:15px;">Barang Paling Sering Diminta</h3>
-      ${res.barangTerbanyak.map(b => `<div class="flex-between" style="padding:.4rem 0;border-bottom:1px solid var(--surface-subtle);"><span>${b.nama}</span><b>${b.jumlah}</b></div>`).join('') || '<div class="text-muted">Belum ada data.</div>'}
+      ${res.barangTerbanyak.map(b => `<div class="flex-between" style="padding:.4rem 0;border-bottom:1px solid var(--surface-subtle);"><span>${esc(b.nama)}</span><b>${b.jumlah}</b></div>`).join('') || '<div class="text-muted">Belum ada data.</div>'}
     </div>
   </div>`;
 }
 
 // ------------------------------------------------------------
-// GANTI PASSWORD (semua role)
+// GANTI PASSWORD (semua role) — tetap menunggu jawaban server
 // ------------------------------------------------------------
-async function renderGantiPassword(content) {
+function renderGantiPassword(content) {
   content.innerHTML = `
   <h2 class="section-title">🔑 Ganti Kata Sandi</h2>
   <div class="card" style="max-width:480px;">
@@ -1058,6 +1291,7 @@ async function renderGantiPassword(content) {
     const confirmPassword = document.getElementById('confirmPass').value;
     if (!oldPassword || !newPassword || !confirmPassword) return showToast('Semua kolom wajib diisi.', 'error');
     if (newPassword !== confirmPassword) return showToast('Konfirmasi kata sandi baru tidak cocok.', 'error');
+    if (newPassword.length < 6) return showToast('Kata sandi baru minimal 6 karakter.', 'error');
 
     const btn = document.getElementById('btnGantiPass');
     btn.disabled = true; btn.textContent = 'Menyimpan...';
@@ -1076,6 +1310,7 @@ async function renderGantiPassword(content) {
 // MODAL sederhana — dipakai untuk form Edit di Data Master
 // ------------------------------------------------------------
 function openModal(innerHtml) {
+  closeModal();
   const wrap = document.createElement('div');
   wrap.className = 'modal-backdrop';
   wrap.id = 'modalBackdrop';
@@ -1090,30 +1325,60 @@ function closeModal() {
 // Konversi base64 -> Object URL blob, dipakai untuk preview PDF tanpa unduh paksa.
 function base64ToBlobUrl(base64, mimeType) {
   const byteChars = atob(base64);
-  const byteNumbers = new Array(byteChars.length);
-  for (let i = 0; i < byteChars.length; i++) byteNumbers[i] = byteChars.charCodeAt(i);
-  const byteArray = new Uint8Array(byteNumbers);
+  const byteArray = new Uint8Array(byteChars.length);
+  for (let i = 0; i < byteChars.length; i++) byteArray[i] = byteChars.charCodeAt(i);
   const blob = new Blob([byteArray], { type: mimeType });
   return URL.createObjectURL(blob);
 }
 
-// Modal lebar khusus untuk melihat PDF langsung di halaman (embed iframe).
-function openPdfModal(blobUrl, noNota) {
+// Jendela PDF langsung terbuka (dengan tanda memuat), lalu PDF-nya menyusul.
+// PDF yang sudah pernah dibuka tampil seketika selama isi nota tidak berubah.
+function lihatPdfNota(noNota) {
+  document.getElementById('pdfModalBackdrop')?.remove();
   const wrap = document.createElement('div');
   wrap.className = 'modal-backdrop';
   wrap.id = 'pdfModalBackdrop';
   wrap.innerHTML = `
     <div class="modal-box" style="max-width:920px;width:95vw;height:90vh;padding:0;display:flex;flex-direction:column;">
       <div class="flex-between" style="padding:.75rem 1rem;border-bottom:1px solid var(--border-subtle);flex-shrink:0;">
-        <b>${noNota}.pdf</b>
+        <b>${esc(noNota)}.pdf</b>
         <button class="btn btn-outline btn-sm" id="closePdfModalBtn">✕ Tutup</button>
       </div>
-      <iframe src="${blobUrl}" style="flex:1;border:none;width:100%;"></iframe>
+      <div id="pdfIsi" style="flex:1;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:.75rem;">
+        <span class="loading-spin" style="width:28px;height:28px;border-width:3px;"></span>
+        <div class="text-muted" style="font-size:13px;text-align:center;">Menyiapkan PDF…<br><span style="font-size:12px;">Pertama kali biasanya 3–8 detik, berikutnya langsung tampil.</span></div>
+      </div>
     </div>`;
-  const cleanup = () => { URL.revokeObjectURL(blobUrl); wrap.remove(); };
-  wrap.addEventListener('click', (e) => { if (e.target === wrap) cleanup(); });
+  let blobUrl = null;
+  const tutup = () => { if (blobUrl) URL.revokeObjectURL(blobUrl); wrap.remove(); };
+  wrap.addEventListener('click', (e) => { if (e.target === wrap) tutup(); });
   document.body.appendChild(wrap);
-  document.getElementById('closePdfModalBtn').addEventListener('click', cleanup);
+  document.getElementById('closePdfModalBtn').addEventListener('click', tutup);
+
+  ambilPdfNota(noNota).then(pdf => {
+    if (!document.body.contains(wrap)) return;
+    blobUrl = base64ToBlobUrl(pdf.base64, 'application/pdf');
+    wrap.querySelector('#pdfIsi').outerHTML = `<iframe src="${blobUrl}" style="flex:1;border:none;width:100%;"></iframe>`;
+  }).catch(err => {
+    if (!document.body.contains(wrap)) return;
+    wrap.querySelector('#pdfIsi').innerHTML = `<div style="font-size:28px;">⚠️</div><div style="text-align:center;padding:0 1rem;">PDF gagal dibuat: ${esc(err.message)}</div>`;
+  });
+}
+
+function unduhPdfNota(noNota) {
+  const btn = document.getElementById('unduhPdfBtn');
+  const teksAsli = btn ? btn.textContent : '';
+  if (btn) { btn.disabled = true; btn.textContent = 'Menyiapkan...'; }
+  ambilPdfNota(noNota).then(pdf => {
+    const link = document.createElement('a');
+    link.href = 'data:application/pdf;base64,' + pdf.base64;
+    link.download = pdf.filename;
+    link.click();
+  }).catch(err => showToast('PDF gagal dibuat: ' + err.message, 'error', 6000))
+    .finally(() => {
+      const b = document.getElementById('unduhPdfBtn');
+      if (b) { b.disabled = false; b.textContent = teksAsli || '⬇️ Unduh PDF'; }
+    });
 }
 
 // ------------------------------------------------------------
@@ -1134,9 +1399,8 @@ function getYoutubeEmbedUrl(url) {
   return null;
 }
 
-async function renderPanduan(content) {
-  const res = await apiGet('getPanduanList', {});
-  const list = res.data;
+function renderPanduan(content) {
+  const list = urutkanTerbaru(store.panduan.filter(p => p.ID || p.Judul));
   const isAdmin = currentUser.role === 'Admin';
 
   content.innerHTML = `
@@ -1147,37 +1411,36 @@ async function renderPanduan(content) {
   <p class="text-muted" style="margin-top:-.5rem;margin-bottom:1rem;">Kumpulan dokumen dan video panduan pengisian Nota Permintaan Barang.</p>
   <div id="panduanList" class="grid-cards"></div>`;
 
-  function renderList() {
-    const wrap = document.getElementById('panduanList');
-    if (!list.length) {
-      wrap.innerHTML = `<div class="empty-state" style="grid-column:1/-1;">Belum ada panduan yang ditambahkan.</div>`;
-      return;
-    }
+  const wrap = document.getElementById('panduanList');
+  if (!list.length) {
+    wrap.innerHTML = `<div class="empty-state" style="grid-column:1/-1;">Belum ada panduan yang ditambahkan.</div>`;
+  } else {
     wrap.innerHTML = list.map(p => {
-      const hapusBtn = isAdmin ? `<button class="btn btn-outline btn-sm" onclick="hapusPanduan('${p.ID}')">🗑️ Hapus</button>` : '';
+      const sementara = String(p.ID).indexOf('SEMENTARA-') === 0;
+      const hapusBtn = isAdmin && !sementara ? `<button class="btn btn-outline btn-sm" onclick="hapusPanduan('${esc(p.ID)}')">🗑️ Hapus</button>` : '';
+      const tandaSimpan = sementara ? '<div class="text-muted" style="font-size:12px;margin-top:.4rem;">⏳ Menyimpan…</div>' : '';
       if (p.Jenis === 'PDF') {
         return `<div class="card">
           <div style="font-size:32px;">📄</div>
-          <h3 style="font-size:15px;margin:.5rem 0 .25rem;">${p.Judul}</h3>
-          ${p.Deskripsi ? `<p class="text-muted" style="font-size:12.5px;">${p.Deskripsi}</p>` : ''}
+          <h3 style="font-size:15px;margin:.5rem 0 .25rem;">${esc(p.Judul)}</h3>
+          ${p.Deskripsi ? `<p class="text-muted" style="font-size:12.5px;">${esc(p.Deskripsi)}</p>` : ''}
           <div style="display:flex;gap:.5rem;margin-top:.75rem;flex-wrap:wrap;">
-            <a href="${p.URL}" target="_blank" class="btn btn-outline btn-sm">Buka PDF</a>
+            <a href="${esc(p.URL)}" target="_blank" class="btn btn-outline btn-sm">Buka PDF</a>
             ${hapusBtn}
-          </div>
+          </div>${tandaSimpan}
         </div>`;
       }
       const embed = getYoutubeEmbedUrl(p.URL);
       return `<div class="card">
-        <h3 style="font-size:15px;margin:0 0 .6rem;">${p.Judul}</h3>
+        <h3 style="font-size:15px;margin:0 0 .6rem;">${esc(p.Judul)}</h3>
         ${embed
-          ? `<div style="position:relative;padding-bottom:56.25%;height:0;border-radius:8px;overflow:hidden;"><iframe src="${embed}" style="position:absolute;top:0;left:0;width:100%;height:100%;border:none;" allowfullscreen></iframe></div>`
-          : `<a href="${p.URL}" target="_blank">${p.URL}</a>`}
-        ${p.Deskripsi ? `<p class="text-muted" style="font-size:12.5px;margin-top:.6rem;">${p.Deskripsi}</p>` : ''}
-        ${hapusBtn ? `<div style="margin-top:.6rem;">${hapusBtn}</div>` : ''}
+          ? `<div style="position:relative;padding-bottom:56.25%;height:0;border-radius:8px;overflow:hidden;"><iframe src="${embed}" style="position:absolute;top:0;left:0;width:100%;height:100%;border:none;" allowfullscreen loading="lazy"></iframe></div>`
+          : `<a href="${esc(p.URL)}" target="_blank">${esc(p.URL)}</a>`}
+        ${p.Deskripsi ? `<p class="text-muted" style="font-size:12.5px;margin-top:.6rem;">${esc(p.Deskripsi)}</p>` : ''}
+        ${hapusBtn ? `<div style="margin-top:.6rem;">${hapusBtn}</div>` : ''}${tandaSimpan}
       </div>`;
     }).join('');
   }
-  renderList();
 
   if (isAdmin) {
     document.getElementById('tambahPanduanBtn').addEventListener('click', () => {
@@ -1203,47 +1466,73 @@ async function renderPanduan(content) {
         const deskripsi = document.getElementById('pDeskripsi').value.trim();
         if (!judul) return showToast('Judul wajib diisi.', 'error');
 
+        if (jenis === 'Video') {
+          const url = document.getElementById('pUrl').value.trim();
+          if (!url) return showToast('URL video YouTube wajib diisi.', 'error');
+          closeModal();
+          kirimInstan({
+            tabel: ['panduan'], aksi: 'addPanduanVideo',
+            data: { judul, deskripsi, youtubeUrl: url, uploaderEmail: currentUser.email },
+            pesan: 'Panduan berhasil ditambahkan.',
+            ubahLokal: () => store.panduan.push({ ID: 'SEMENTARA-' + Date.now(), Judul: judul, Deskripsi: deskripsi, Jenis: 'Video', URL: url, NamaFile: '', UploadedBy: currentUser.email, CreatedAt: sekarangWib() })
+          }).catch(() => {});
+          return;
+        }
+
+        // Unggah file PDF tetap ditunggu sampai selesai
+        const file = document.getElementById('pFile').files[0];
+        if (!file) return showToast('Pilih file PDF terlebih dahulu.', 'error');
         const btn = document.getElementById('pSaveBtn');
-        btn.disabled = true; btn.textContent = 'Menyimpan...';
+        btn.disabled = true; btn.textContent = 'Mengunggah...';
         try {
-          if (jenis === 'PDF') {
-            const file = document.getElementById('pFile').files[0];
-            if (!file) { showToast('Pilih file PDF terlebih dahulu.', 'error'); btn.disabled = false; btn.textContent = 'Simpan Panduan'; return; }
-            const base64 = await fileToBase64(file);
-            await apiPost('addPanduanPdf', { judul, deskripsi, fileBase64: base64, fileName: file.name, mimeType: file.type, uploaderEmail: currentUser.email });
-          } else {
-            const url = document.getElementById('pUrl').value.trim();
-            if (!url) { showToast('URL video YouTube wajib diisi.', 'error'); btn.disabled = false; btn.textContent = 'Simpan Panduan'; return; }
-            await apiPost('addPanduanVideo', { judul, deskripsi, youtubeUrl: url, uploaderEmail: currentUser.email });
-          }
-          showToast('Panduan berhasil ditambahkan.'); closeModal(); router();
+          const base64 = await fileToBase64(file);
+          const res = await apiPost('addPanduanPdf', { judul, deskripsi, fileBase64: base64, fileName: file.name, mimeType: file.type, uploaderEmail: currentUser.email }, { timeout: 180000 });
+          terapkanPaket(res);
+          simpanDataLokal();
+          if (store.perluSinkron) { store.perluSinkron = false; jadwalkanSinkron(300); }
+          showToast('Panduan berhasil ditambahkan.');
+          closeModal();
+          router({ ulang: true });
         } catch (err) { btn.disabled = false; btn.textContent = 'Simpan Panduan'; }
       });
     });
   }
 }
 
-window.hapusPanduan = async function (id) {
+window.hapusPanduan = function (id) {
   if (!confirm('Hapus panduan ini?')) return;
-  await apiPost('deletePanduan', { id });
-  showToast('Panduan dihapus.'); router();
+  kirimInstan({
+    tabel: ['panduan'], aksi: 'deletePanduan', data: { id },
+    pesan: 'Panduan dihapus.',
+    ubahLokal: () => { store.panduan = store.panduan.filter(p => String(p.ID) !== String(id)); }
+  }).catch(() => {});
 };
 
 // ------------------------------------------------------------
-// DATA MASTER (Admin)
+// DATA MASTER (Admin) — perubahan langsung tampil, disimpan di latar belakang
 // ------------------------------------------------------------
-async function renderDataMaster(content) {
+let tabMasterAktif = 'barang';
+
+function aksiMaster(jenis, aksi, data, pesan, ubah, sesudahBerhasil) {
+  closeModal();
+  return kirimInstan({ tabel: [jenis], aksi, data, pesan, ubahLokal: ubah, sesudahBerhasil }).catch(() => {});
+}
+
+function renderDataMaster(content) {
   if (currentUser.role !== 'Admin') { content.innerHTML = '<div class="empty-state">Halaman ini khusus Admin.</div>'; return; }
-  const master = await apiGet('getMasterData', { jenis: 'semua' });
+  const master = store; // barang, pegawai, bidang
 
   content.innerHTML = `
   <h2 class="section-title">⚙️ Kelola Data Master</h2>
   <div class="chip-row" id="masterTabs">
-    <span class="chip-filter active" data-tab="barang">Barang</span>
-    <span class="chip-filter" data-tab="pegawai">Pegawai</span>
-    <span class="chip-filter" data-tab="bidang">Bidang</span>
+    <span class="chip-filter ${tabMasterAktif === 'barang' ? 'active' : ''}" data-tab="barang">Barang</span>
+    <span class="chip-filter ${tabMasterAktif === 'pegawai' ? 'active' : ''}" data-tab="pegawai">Pegawai</span>
+    <span class="chip-filter ${tabMasterAktif === 'bidang' ? 'active' : ''}" data-tab="bidang">Bidang</span>
   </div>
   <div class="card" id="masterContent"></div>`;
+
+  const val = (id) => document.getElementById(id).value;
+  const jsArg = (x) => esc(JSON.stringify(String(x === undefined || x === null ? '' : x)));
 
   function renderTab(tab) {
     const box = document.getElementById('masterContent');
@@ -1255,12 +1544,14 @@ async function renderDataMaster(content) {
         </div>
         <button class="btn btn-primary btn-sm" id="mAddBtn">Tambah Barang</button>
         <div class="table-wrap" style="margin-top:1rem;"><table class="data-table"><thead><tr><th>Nama</th><th>Satuan</th><th></th></tr></thead>
-        <tbody>${master.barang.map((b, i) => `<tr><td>${b.NamaBarang}</td><td>${b.Satuan}</td><td style="white-space:nowrap;">
-          <button class="btn btn-outline btn-sm" onclick="editMasterBarang(${i})">Edit</button>
-          <button class="btn btn-outline btn-sm" onclick="hapusMaster('barang','${b.NamaBarang}')">Hapus</button></td></tr>`).join('')}</tbody></table></div>`;
-      document.getElementById('mAddBtn').addEventListener('click', async () => {
-        await apiPost('addMasterBarang', { namaBarang: document.getElementById('mNama').value, satuan: document.getElementById('mSatuan').value });
-        showToast('Barang ditambahkan.'); router();
+        <tbody>${master.barang.map((b, i) => `<tr><td>${esc(b.NamaBarang)}</td><td>${esc(b.Satuan)}</td><td style="white-space:nowrap;">
+          <button class="btn btn-outline btn-sm" onclick="editMasterBarang(${jsArg(b.NamaBarang)})">Edit</button>
+          <button class="btn btn-outline btn-sm" onclick="hapusMaster('barang',${jsArg(b.NamaBarang)})">Hapus</button></td></tr>`).join('')}</tbody></table></div>`;
+      document.getElementById('mAddBtn').addEventListener('click', () => {
+        const namaBarang = val('mNama').trim(), satuan = val('mSatuan').trim();
+        if (!namaBarang || !satuan) return showToast('Nama barang & satuan wajib diisi.', 'error');
+        aksiMaster('barang', 'addMasterBarang', { namaBarang, satuan }, 'Barang ditambahkan.',
+          () => store.barang.push({ NamaBarang: namaBarang, Satuan: satuan, KodeBMN: '', Kategori: '' }));
       });
     } else if (tab === 'pegawai') {
       box.innerHTML = `
@@ -1279,16 +1570,19 @@ async function renderDataMaster(content) {
         </div>
         <button class="btn btn-primary btn-sm" id="mAddBtn">Tambah Pegawai</button>
         <div class="table-wrap" style="margin-top:1rem;"><table class="data-table"><thead><tr><th>Nama</th><th>Jabatan</th><th>Email</th><th>Role</th><th>Bidang</th><th></th></tr></thead>
-        <tbody>${master.pegawai.map((p, i) => `<tr><td>${p.Nama}</td><td>${p.Jabatan || '<span class="text-danger">belum diisi</span>'}</td><td>${p.Email}</td><td>${p.Role}</td><td>${p.BidangKode}</td><td style="white-space:nowrap;">
-          <button class="btn btn-outline btn-sm" onclick="editMasterPegawai(${i})">Edit</button>
-          <button class="btn btn-outline btn-sm" onclick="hapusMaster('pegawai','${p.Email}')">Hapus</button></td></tr>`).join('')}</tbody></table></div>`;
-      document.getElementById('mAddBtn').addEventListener('click', async () => {
-        await apiPost('addMasterPegawai', {
-          nama: document.getElementById('mNama').value, nip: document.getElementById('mNip').value,
-          email: document.getElementById('mEmail').value, jabatan: document.getElementById('mJabatan').value,
-          role: document.getElementById('mRole').value, bidangKode: document.getElementById('mBidang').value
-        });
-        showToast('Pegawai ditambahkan.'); router();
+        <tbody>${master.pegawai.map((p, i) => `<tr><td>${esc(p.Nama)}</td><td>${p.Jabatan ? esc(p.Jabatan) : '<span class="text-danger">belum diisi</span>'}</td><td>${esc(p.Email)}</td><td>${esc(p.Role)}</td><td>${esc(p.BidangKode)}</td><td style="white-space:nowrap;">
+          <button class="btn btn-outline btn-sm" onclick="editMasterPegawai(${jsArg(kunciPegawai(p))})">Edit</button>
+          <button class="btn btn-outline btn-sm" onclick="hapusPegawai(${jsArg(kunciPegawai(p))})">Hapus</button></td></tr>`).join('')}</tbody></table></div>`;
+      document.getElementById('mAddBtn').addEventListener('click', () => {
+        const d = {
+          nama: val('mNama').trim(), nip: val('mNip').trim(), email: val('mEmail').trim(), jabatan: val('mJabatan').trim(),
+          role: val('mRole'), bidangKode: val('mBidang').trim()
+        };
+        if (!d.nama || !d.email || !d.role) return showToast('Nama, email, dan role wajib diisi.', 'error');
+        if (pegawaiDenganEmail(d.email)) return showToast('Email ' + d.email + ' sudah terdaftar.', 'error');
+        aksiMaster('pegawai', 'addMasterPegawai', d, 'Pegawai ditambahkan.',
+          () => store.pegawai.push({ Nama: d.nama, NIP: d.nip, Email: d.email, Role: d.role, BidangKode: d.bidangKode, Jabatan: d.jabatan }),
+          (res) => showToast(res.message, 'success', 6000)); // berisi password awal
       });
     } else {
       box.innerHTML = `
@@ -1306,100 +1600,137 @@ async function renderDataMaster(content) {
         </div>
         <button class="btn btn-primary btn-sm" id="mAddBtn">Tambah Bidang</button>
         <div class="table-wrap" style="margin-top:1rem;"><table class="data-table"><thead><tr><th>Kode</th><th>Nama</th><th>Singkatan</th><th>Atasan Mengetahui</th><th>Atasan Menyetujui</th><th></th></tr></thead>
-        <tbody>${master.bidang.map((b, i) => `<tr><td>${b.KodeBidang}</td><td>${b.NamaBidang}</td><td>${b.Singkatan || '-'}</td><td>${b.AtasanMengetahuiEmail}</td><td>${b.AtasanMenyetujuiEmail}</td><td style="white-space:nowrap;">
-          <button class="btn btn-outline btn-sm" onclick="editMasterBidang(${i})">Edit</button>
-          <button class="btn btn-outline btn-sm" onclick="hapusMaster('bidang','${b.KodeBidang}')">Hapus</button></td></tr>`).join('')}</tbody></table></div>`;
-      document.getElementById('mAddBtn').addEventListener('click', async () => {
-        await apiPost('addMasterBidang', {
-          kodeBidang: document.getElementById('mKode').value, namaBidang: document.getElementById('mNamaBidang').value,
-          singkatan: document.getElementById('mSingkatan').value,
-          atasanMengetahuiEmail: document.getElementById('mAM').value, atasanMenyetujuiEmail: document.getElementById('mAS').value
-        });
-        showToast('Bidang ditambahkan.'); router();
+        <tbody>${master.bidang.map((b, i) => `<tr><td>${esc(b.KodeBidang)}</td><td>${esc(b.NamaBidang)}</td><td>${esc(b.Singkatan) || '-'}</td><td>${esc(b.AtasanMengetahuiEmail)}</td><td>${esc(b.AtasanMenyetujuiEmail)}</td><td style="white-space:nowrap;">
+          <button class="btn btn-outline btn-sm" onclick="editMasterBidang(${jsArg(b.KodeBidang)})">Edit</button>
+          <button class="btn btn-outline btn-sm" onclick="hapusMaster('bidang',${jsArg(b.KodeBidang)})">Hapus</button></td></tr>`).join('')}</tbody></table></div>`;
+      document.getElementById('mAddBtn').addEventListener('click', () => {
+        const d = {
+          kodeBidang: val('mKode').trim(), namaBidang: val('mNamaBidang').trim(), singkatan: val('mSingkatan').trim(),
+          atasanMengetahuiEmail: val('mAM').trim(), atasanMenyetujuiEmail: val('mAS').trim()
+        };
+        if (!d.kodeBidang || !d.namaBidang) return showToast('Kode & nama bidang wajib diisi.', 'error');
+        aksiMaster('bidang', 'addMasterBidang', d, 'Bidang ditambahkan.', () => store.bidang.push({
+          KodeBidang: d.kodeBidang, NamaBidang: d.namaBidang, Singkatan: d.singkatan,
+          AtasanMengetahuiEmail: d.atasanMengetahuiEmail, AtasanMenyetujuiEmail: d.atasanMenyetujuiEmail
+        }));
       });
     }
   }
-  window.editMasterBarang = function (i) {
-    const b = master.barang[i];
+
+  window.editMasterBarang = function (kunci) {
+    const b = typeof kunci === 'number' ? store.barang[kunci] : store.barang.find(o => String(o.NamaBarang) === String(kunci));
+    if (!b) return;
     openModal(`
       <h3 class="section-title" style="font-size:16px;">Edit Barang</h3>
-      <div class="field"><label>Nama Barang</label><input id="eNama" value="${b.NamaBarang}"></div>
-      <div class="field"><label>Satuan</label><input id="eSatuan" value="${b.Satuan}"></div>
-      <div class="field"><label>Kategori</label><input id="eKategori" value="${b.Kategori || ''}"></div>
+      <div class="field"><label>Nama Barang</label><input id="eNama" value="${esc(b.NamaBarang)}"></div>
+      <div class="field"><label>Satuan</label><input id="eSatuan" value="${esc(b.Satuan)}"></div>
+      <div class="field"><label>Kategori</label><input id="eKategori" value="${esc(b.Kategori)}"></div>
       <div style="display:flex;gap:.6rem;"><button class="btn btn-primary" id="eSaveBtn">Simpan</button><button class="btn btn-outline" onclick="closeModal()">Batal</button></div>`);
-    document.getElementById('eSaveBtn').addEventListener('click', async () => {
-      await apiPost('updateMasterBarang', {
-        originalNama: b.NamaBarang, namaBarang: document.getElementById('eNama').value,
-        satuan: document.getElementById('eSatuan').value, kategori: document.getElementById('eKategori').value
+    document.getElementById('eSaveBtn').addEventListener('click', () => {
+      const d = { originalNama: b.NamaBarang, namaBarang: val('eNama'), satuan: val('eSatuan'), kategori: val('eKategori') };
+      aksiMaster('barang', 'updateMasterBarang', d, 'Barang berhasil diperbarui.', () => {
+        const x = store.barang.find(o => o.NamaBarang === d.originalNama);
+        if (x) Object.assign(x, { NamaBarang: d.namaBarang, Satuan: d.satuan, Kategori: d.kategori });
       });
-      showToast('Barang berhasil diperbarui.'); closeModal(); router();
     });
   };
 
-  window.editMasterPegawai = function (i) {
-    const p = master.pegawai[i];
+  window.editMasterPegawai = function (kunci) {
+    const p = typeof kunci === 'number' ? store.pegawai[kunci] : cariPegawaiDenganKunci(kunci);
+    if (!p) return;
     const roles = ['Admin', 'Pemohon', 'Atasan Mengetahui', 'Atasan Menyetujui', 'Perlengkapan'];
     openModal(`
       <h3 class="section-title" style="font-size:16px;">Edit Pegawai</h3>
-      <div class="field"><label>Nama</label><input id="eNama" value="${p.Nama}"></div>
-      <div class="field"><label>NIP</label><input id="eNip" value="${p.NIP || ''}"></div>
-      <div class="field"><label>Email</label><input id="eEmail" value="${p.Email}"></div>
-      <div class="field"><label>Jabatan (tercantum di Berita Acara)</label><input id="eJabatan" value="${p.Jabatan || ''}" placeholder="mis. Pengurus Barang"></div>
+      <div class="field"><label>Nama</label><input id="eNama" value="${esc(p.Nama)}"></div>
+      <div class="field"><label>NIP</label><input id="eNip" value="${esc(p.NIP)}"></div>
+      <div class="field"><label>Email</label><input id="eEmail" value="${esc(p.Email)}"></div>
+      <div class="field"><label>Jabatan (tercantum di Berita Acara)</label><input id="eJabatan" value="${esc(p.Jabatan)}" placeholder="mis. Pengurus Barang"></div>
       <div class="field"><label>Role</label><select id="eRole">${roles.map(r => `<option ${r === p.Role ? 'selected' : ''}>${r}</option>`).join('')}</select></div>
-      <div class="field"><label>Kode Bidang</label><input id="eBidang" value="${p.BidangKode || ''}"></div>
+      <div class="field"><label>Kode Bidang</label><input id="eBidang" value="${esc(p.BidangKode)}"></div>
       <div style="display:flex;gap:.6rem;"><button class="btn btn-primary" id="eSaveBtn">Simpan</button><button class="btn btn-outline" onclick="closeModal()">Batal</button></div>
       <hr style="margin:1.25rem 0;border:none;border-top:1px solid var(--border-subtle);">
       <div class="field-hint" style="margin-bottom:.5rem;">Lupa/hilang akses password? Reset ke password baru di bawah ini (pegawai wajib diberi tahu manual oleh Admin).</div>
       <div class="field"><label>Password Baru (opsional, min. 6 karakter — kosongkan untuk pakai default "dishub123")</label><input type="text" id="eNewPass" placeholder="dishub123"></div>
       <button class="btn btn-outline btn-block" id="eResetPassBtn">🔑 Reset Password Akun Ini</button>`);
-    document.getElementById('eSaveBtn').addEventListener('click', async () => {
-      await apiPost('updateMasterPegawai', {
-        originalEmail: p.Email, nama: document.getElementById('eNama').value, nip: document.getElementById('eNip').value,
-        email: document.getElementById('eEmail').value, role: document.getElementById('eRole').value, bidangKode: document.getElementById('eBidang').value,
-        jabatan: document.getElementById('eJabatan').value
+    document.getElementById('eSaveBtn').addEventListener('click', () => {
+      const d = {
+        originalEmail: p.Email, originalNip: p.NIP, originalNama: p.Nama, nama: val('eNama'), nip: val('eNip'), email: val('eEmail'),
+        role: val('eRole'), bidangKode: val('eBidang'), jabatan: val('eJabatan')
+      };
+      const kunciAsli = kunciPegawai(p);
+      aksiMaster('pegawai', 'updateMasterPegawai', d, 'Data pegawai berhasil diperbarui.', () => {
+        const x = cariPegawaiDenganKunci(kunciAsli);
+        if (x) Object.assign(x, { Nama: d.nama, NIP: d.nip, Email: d.email, Role: d.role, BidangKode: d.bidangKode, Jabatan: d.jabatan });
       });
-      showToast('Data pegawai berhasil diperbarui.'); closeModal(); router();
     });
     document.getElementById('eResetPassBtn').addEventListener('click', async () => {
       if (!confirm('Reset password akun ' + p.Nama + '?')) return;
-      const newPassword = document.getElementById('eNewPass').value;
-      const res = await apiPost('adminResetPassword', { email: p.Email, newPassword });
-      closeModal();
-      alert('Password akun ' + p.Nama + ' (' + p.Email + ') berhasil direset menjadi:\n\n' + res.newPassword + '\n\nSegera beri tahu pemilik akun secara manual, dan minta mereka menggantinya lagi lewat menu "Ganti Password".');
+      const newPassword = val('eNewPass');
+      const btn = document.getElementById('eResetPassBtn');
+      btn.disabled = true; btn.textContent = 'Mereset...';
+      try {
+        const res = await apiPost('adminResetPassword', { email: p.Email, newPassword });
+        closeModal();
+        alert('Password akun ' + p.Nama + ' (' + p.Email + ') berhasil direset menjadi:\n\n' + res.newPassword + '\n\nSegera beri tahu pemilik akun secara manual, dan minta mereka menggantinya lagi lewat menu "Ganti Password".');
+      } catch (err) { btn.disabled = false; btn.textContent = '🔑 Reset Password Akun Ini'; }
     });
   };
 
-  window.editMasterBidang = function (i) {
-    const b = master.bidang[i];
+  window.editMasterBidang = function (kunci) {
+    const b = typeof kunci === 'number' ? store.bidang[kunci] : store.bidang.find(o => String(o.KodeBidang) === String(kunci));
+    if (!b) return;
     openModal(`
       <h3 class="section-title" style="font-size:16px;">Edit Bidang</h3>
-      <div class="field"><label>Kode Bidang</label><input id="eKode" value="${b.KodeBidang}"></div>
-      <div class="field"><label>Nama Bidang</label><input id="eNama" value="${b.NamaBidang}"></div>
-      <div class="field"><label>Singkatan (untuk penomoran surat, mis. "KEU")</label><input id="eSingkatan" value="${b.Singkatan || ''}"></div>
-      <div class="field"><label>Email Atasan Mengetahui</label><input id="eAM" value="${b.AtasanMengetahuiEmail || ''}"></div>
-      <div class="field"><label>Email Atasan Menyetujui</label><input id="eAS" value="${b.AtasanMenyetujuiEmail || ''}"></div>
+      <div class="field"><label>Kode Bidang</label><input id="eKode" value="${esc(b.KodeBidang)}"></div>
+      <div class="field"><label>Nama Bidang</label><input id="eNama" value="${esc(b.NamaBidang)}"></div>
+      <div class="field"><label>Singkatan (untuk penomoran surat, mis. "KEU")</label><input id="eSingkatan" value="${esc(b.Singkatan)}"></div>
+      <div class="field"><label>Email Atasan Mengetahui</label><input id="eAM" value="${esc(b.AtasanMengetahuiEmail)}"></div>
+      <div class="field"><label>Email Atasan Menyetujui</label><input id="eAS" value="${esc(b.AtasanMenyetujuiEmail)}"></div>
       <div style="display:flex;gap:.6rem;"><button class="btn btn-primary" id="eSaveBtn">Simpan</button><button class="btn btn-outline" onclick="closeModal()">Batal</button></div>`);
-    document.getElementById('eSaveBtn').addEventListener('click', async () => {
-      await apiPost('updateMasterBidang', {
-        originalKode: b.KodeBidang, kodeBidang: document.getElementById('eKode').value, namaBidang: document.getElementById('eNama').value,
-        singkatan: document.getElementById('eSingkatan').value,
-        atasanMengetahuiEmail: document.getElementById('eAM').value, atasanMenyetujuiEmail: document.getElementById('eAS').value
+    document.getElementById('eSaveBtn').addEventListener('click', () => {
+      const d = {
+        originalKode: b.KodeBidang, kodeBidang: val('eKode'), namaBidang: val('eNama'), singkatan: val('eSingkatan'),
+        atasanMengetahuiEmail: val('eAM'), atasanMenyetujuiEmail: val('eAS')
+      };
+      aksiMaster('bidang', 'updateMasterBidang', d, 'Data bidang berhasil diperbarui.', () => {
+        const x = store.bidang.find(o => String(o.KodeBidang) === String(d.originalKode));
+        if (x) Object.assign(x, {
+          KodeBidang: d.kodeBidang, NamaBidang: d.namaBidang, Singkatan: d.singkatan,
+          AtasanMengetahuiEmail: d.atasanMengetahuiEmail, AtasanMenyetujuiEmail: d.atasanMenyetujuiEmail
+        });
       });
-      showToast('Data bidang berhasil diperbarui.'); closeModal(); router();
     });
   };
 
   document.querySelectorAll('#masterTabs .chip-filter').forEach(chip => {
     chip.addEventListener('click', () => {
+      tabMasterAktif = chip.dataset.tab;
       document.querySelectorAll('#masterTabs .chip-filter').forEach(c => c.classList.toggle('active', c === chip));
       renderTab(chip.dataset.tab);
     });
   });
-  renderTab('barang');
+  renderTab(tabMasterAktif);
 }
 
-window.hapusMaster = async function (jenis, value) {
+// Kunci pegawai: email; untuk pegawai tanpa email dipakai NIP + nama
+function kunciPegawai(p) {
+  return String(p.Email || '').trim() ? 'email:' + String(p.Email).trim().toLowerCase() : 'nip:' + String(p.NIP || '').trim() + '|' + String(p.Nama || '').trim();
+}
+function cariPegawaiDenganKunci(kunci) {
+  return store.pegawai.find(p => kunciPegawai(p) === kunci) || null;
+}
+window.hapusPegawai = function (kunci) {
+  const p = cariPegawaiDenganKunci(kunci);
+  if (!p || !confirm('Hapus data ini?')) return;
+  aksiMaster('pegawai', 'deleteMaster', { jenis: 'pegawai', value: p.Email || '', nip: p.NIP || '', nama: p.Nama || '' }, 'Data dihapus.', () => {
+    store.pegawai = store.pegawai.filter(o => kunciPegawai(o) !== kunci);
+  });
+};
+
+window.hapusMaster = function (jenis, value) {
   if (!confirm('Hapus data ini?')) return;
-  await apiPost('deleteMaster', { jenis, value });
-  showToast('Data dihapus.'); router();
+  const kunciKolom = { barang: 'NamaBarang', pegawai: 'Email', bidang: 'KodeBidang' }[jenis];
+  aksiMaster(jenis, 'deleteMaster', { jenis, value }, 'Data dihapus.', () => {
+    store[jenis] = store[jenis].filter(o => String(o[kunciKolom]) !== String(value));
+  });
 };

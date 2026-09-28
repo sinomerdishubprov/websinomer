@@ -36,5 +36,6 @@ assets/logo.png
 **Segera ganti password contoh setelah setup awal** (lewat menu Data Master → Pegawai, hapus & tambahkan ulang dengan password baru, atau melalui fitur reset password).
 
 ## Catatan Keterbatasan
+- Login **tidak dibatasi domain email** — email apa pun bisa login selama sudah didaftarkan Admin di Data Master → Pegawai. Akses dikontrol lewat status terdaftar, bukan domain.
 - Sesi login disimpan di memori (hilang saat refresh) — aplikasi ini murni frontend statis tanpa localStorage sesuai batasan platform. Untuk sesi persisten, tambahkan mekanisme penyimpanan sisi-klien sesuai kebutuhan Anda.
-- Login via Google Account (OAuth) belum diimplementasikan di versi ini (memerlukan setup OAuth Client terpisah) — saat ini menggunakan email/password internal.
+- Login via Google Account (OAuth) belum diimplementasikan di versi ini (memerlukan setup OAuth Client terpisah) — saat ini menggunakan email/password bebas.

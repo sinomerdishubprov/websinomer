@@ -100,7 +100,8 @@ Saat diminta password, gunakan **Personal Access Token** (bukan password akun bi
 - [ ] Segera ganti password contoh di Data Master setelah go-live.
 
 ## 🔒 Catatan Keamanan & Batasan
-- Login dibatasi ke domain `@dishub.riau.go.id`, divalidasi di backend.
+- Login **tidak dibatasi ke domain email tertentu** — siapa pun dengan email yang telah didaftarkan Admin di Data Master → Pegawai dapat login, apa pun domain emailnya (gmail.com, dll). Yang mengontrol akses adalah **status terdaftar** di sheet `Master_Pegawai`, bukan domain email.
+- Karena email bebas, pastikan Admin hanya mendaftarkan pegawai yang memang berwenang — hapus akun dari Data Master untuk mencabut akses.
 - Password disimpan ter-hash (SHA-256) di Google Sheets — tetap disarankan membatasi akses Spreadsheet hanya untuk Admin sistem.
 - QR Code memakai layanan publik QuickChart (tanpa API key) untuk render gambar; kode verifikasi unik tetap divalidasi di backend melalui `action=verifyQr`.
 - PDF final (dengan kedua QR) disimpan permanen ke Drive; PDF tahap-tahap sebelumnya digenerate on-the-fly setiap diunduh, tidak disimpan — sesuai PRD bagian 4.2.

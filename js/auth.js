@@ -26,15 +26,22 @@ function requireRole(...roles) {
   return currentUser && roles.includes(currentUser.role);
 }
 
+// Jawaban login sekaligus membawa seluruh data aplikasi (boot), supaya
+// dashboard langsung tampil tanpa permintaan kedua ke server.
 async function doLogin(email, password) {
   const result = await apiPost('login', { email, password });
   currentUser = result.user;
+  window.paketAwalLogin = result.boot || null;
   try { localStorage.setItem(SESSION_KEY, JSON.stringify(currentUser)); } catch (err) { /* localStorage tidak tersedia, sesi tetap jalan di memori */ }
   return result.user;
 }
 
 function doLogout() {
+  const email = currentUser && currentUser.email;
   currentUser = null;
   try { localStorage.removeItem(SESSION_KEY); } catch (err) { /* abaikan */ }
+  // Data salinan di browser ikut dihapus (aman untuk komputer bersama)
+  if (email && typeof hapusDataLokal === 'function') hapusDataLokal(email);
+  if (typeof kosongkanStore === 'function') kosongkanStore();
   location.hash = '#/login';
 }
