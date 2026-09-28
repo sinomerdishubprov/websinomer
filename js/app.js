@@ -129,6 +129,7 @@ async function router() {
     else if (hash === '#/serah-terima') await renderNotaList(content, { status: 'Diproses', title: 'Serah Terima Barang' });
     else if (hash === '#/proses-barang') { location.hash = '#/serah-terima'; return; } // alamat menu lama
     else if (hash.startsWith('#/detail/')) await renderDetail(content, decodeURIComponent(hash.split('#/detail/')[1]));
+    else if (hash.startsWith('#/edit-nota/')) await renderBuatNota(content, decodeURIComponent(hash.split('#/edit-nota/')[1]));
     else if (hash === '#/laporan') await renderLaporan(content);
     else if (hash === '#/data-master') await renderDataMaster(content);
     else if (hash === '#/ganti-password') await renderGantiPassword(content);
@@ -307,10 +308,11 @@ async function renderDashboard(content) {
   </div>`;
 }
 
-function renderNotaTable(list) {
+function renderNotaTable(list, opts = {}) {
   if (!list.length) return `<div class="empty-state">Belum ada nota untuk ditampilkan.</div>`;
+  const aksi = !!opts.aksiPemohon;
   return `<div class="table-wrap"><table class="data-table">
-    <thead><tr><th>No. Nota</th><th>Tanggal</th><th>Bidang</th><th>Pemohon</th><th>Status</th></tr></thead>
+    <thead><tr><th>No. Nota</th><th>Tanggal</th><th>Bidang</th><th>Pemohon</th><th>Status</th>${aksi ? '<th>Aksi</th>' : ''}</tr></thead>
     <tbody>${list.map(n => `
       <tr class="row-link" onclick="location.hash='#/detail/${encodeURIComponent(n.NoNota)}'">
         <td class="no-nota-cell">${n.NoNota}</td>
@@ -318,33 +320,57 @@ function renderNotaTable(list) {
         <td>${n.BidangNama}</td>
         <td>${n.PemohonNama}</td>
         <td>${statusBadge(n.Status)}</td>
+        ${aksi ? `<td style="white-space:nowrap;" onclick="event.stopPropagation()">${bisaDiubahPemohon(n)
+          ? `<a class="btn btn-outline btn-sm" href="#/edit-nota/${encodeURIComponent(n.NoNota)}">✏️ Edit</a>
+             <button type="button" class="btn btn-danger btn-sm" onclick="hapusNotaPemohon('${encodeURIComponent(n.NoNota)}')">🗑️ Hapus</button>`
+          : '<span class="text-muted" style="font-size:12px;" title="Nota sudah diproses sehingga tidak bisa diubah atau dihapus">🔒 Terkunci</span>'}</td>` : ''}
       </tr>`).join('')}</tbody></table></div>`;
 }
 
 // ------------------------------------------------------------
-// BUAT NOTA BARU
+// BUAT NOTA BARU  &  UBAH NOTA (editNoNota diisi = mode ubah)
+// Nota hanya bisa diubah oleh pemohonnya selama status masih Diajukan.
 // ------------------------------------------------------------
-async function renderBuatNota(content) {
-  const master = await apiGet('getMasterData', { jenis: 'semua' });
+async function renderBuatNota(content, editNoNota) {
+  const [master, detail] = await Promise.all([
+    apiGet('getMasterData', { jenis: 'semua' }),
+    editNoNota ? apiGet('getNotaDetail', { noNota: editNoNota, email: currentUser.email }) : Promise.resolve(null)
+  ]);
   const barangList = master.barang;
   const SATUAN_OPTIONS = ['Pcs', 'Unit', 'Buah', 'Rim', 'Lembar', 'Roll', 'Kotak', 'Set', 'Paket', 'Meter', 'Liter', 'Kg', 'Botol', 'Galon'];
+  const modeUbah = !!detail;
+  const nota = modeUbah ? detail.nota : null;
+
+  if (modeUbah && !bisaDiubahPemohon(nota)) {
+    content.innerHTML = `
+    <div class="card" style="max-width:560px;">
+      <h2 class="section-title">🔒 Nota tidak bisa diubah</h2>
+      <p>Nota <b>${nota.NoNota}</b> berstatus <b>${nota.Status}</b>. Nota hanya bisa diubah atau dihapus oleh pemohonnya selama masih berstatus <b>Diajukan</b>.</p>
+      <a href="#/detail/${encodeURIComponent(nota.NoNota)}" class="btn btn-outline">← Kembali ke detail nota</a>
+    </div>`;
+    return;
+  }
+
+  const bidangField = modeUbah
+    ? `<select id="fBidang" disabled><option value="${nota.BidangKode}">${nota.BidangNama}</option></select>
+       <div class="text-muted" style="font-size:11.5px;margin-top:.3rem;">Bidang tidak bisa diganti karena sudah menjadi bagian nomor nota. Jika salah bidang, hapus nota ini lalu buat yang baru.</div>`
+    : `<select id="fBidang">${master.bidang.map(b => `<option value="${b.KodeBidang}" ${b.KodeBidang === currentUser.bidangKode ? 'selected' : ''}>${b.NamaBidang}</option>`).join('')}</select>`;
 
   content.innerHTML = `
-  <h2 class="section-title">➕ Ajukan Nota Permintaan Barang</h2>
+  ${modeUbah ? `<a href="#/detail/${encodeURIComponent(nota.NoNota)}" style="font-size:12.5px;">← Kembali</a>` : ''}
+  <h2 class="section-title">${modeUbah ? '✏️ Ubah Nota ' + nota.NoNota : '➕ Ajukan Nota Permintaan Barang'}</h2>
   <div class="card">
     <div class="grid-2">
-      <div class="field"><label>Bidang / Unit Kerja</label>
-        <select id="fBidang">${master.bidang.map(b => `<option value="${b.KodeBidang}" ${b.KodeBidang === currentUser.bidangKode ? 'selected' : ''}>${b.NamaBidang}</option>`).join('')}</select>
-      </div>
-      <div class="field"><label>Tanggal Pengajuan</label><input type="text" value="${new Date().toLocaleDateString('id-ID')}" disabled></div>
+      <div class="field"><label>Bidang / Unit Kerja</label>${bidangField}</div>
+      <div class="field"><label>Tanggal Pengajuan</label><input type="text" value="${modeUbah ? fmtTgl(nota.Tanggal, false) : new Date().toLocaleDateString('id-ID')}" disabled></div>
     </div>
 
     <div class="flex-between"><label style="font-weight:600;">Daftar Barang</label><button type="button" class="btn btn-outline btn-sm" id="addItemBtn">➕ Tambah Barang</button></div>
     <div id="itemsWrap"></div>
 
     <div style="margin-top:1.5rem;display:flex;gap:.75rem;">
-      <button class="btn btn-primary" id="submitNotaBtn">Ajukan Nota</button>
-      <a href="#/dashboard" class="btn btn-outline">Batal</a>
+      <button class="btn btn-primary" id="submitNotaBtn">${modeUbah ? 'Simpan Perubahan' : 'Ajukan Nota'}</button>
+      <a href="${modeUbah ? '#/detail/' + encodeURIComponent(nota.NoNota) : '#/dashboard'}" class="btn btn-outline">Batal</a>
     </div>
   </div>`;
 
@@ -358,7 +384,8 @@ async function renderBuatNota(content) {
       + `<option value="__lainnya__" ${selected && !inList ? 'selected' : ''}>Lainnya (ketik manual)</option>`;
   }
 
-  function addItemRow() {
+  // isi (opsional) = { namaBarang, jumlah, satuan } untuk mode ubah
+  function addItemRow(isi) {
     itemCount++;
     const rowId = 'item_' + itemCount;
     const row = document.createElement('div');
@@ -376,11 +403,29 @@ async function renderBuatNota(content) {
       </div>
       <div class="field" style="margin-bottom:0;"><label>Jumlah</label><input type="number" class="itemJumlah" min="1" value="1"></div>
       <div class="field" style="margin-bottom:0;"><label>Satuan</label>
-        <select class="itemSatuan" onchange="toggleSatuanManual(this)">${satuanOptionsHtml('')}</select>
+        <select class="itemSatuan" onchange="toggleSatuanManual(this)">${satuanOptionsHtml(isi ? String(isi.satuan || '') : '')}</select>
         <input class="itemSatuanManual" style="display:none;margin-top:.4rem;" placeholder="Ketik satuan lain">
       </div>
       <button type="button" class="btn btn-outline btn-sm" onclick="document.getElementById('${rowId}').remove()">✕</button>`;
     itemsWrap.appendChild(row);
+
+    if (isi) {
+      const nama = String(isi.namaBarang || '');
+      const selBarang = row.querySelector('.itemBarang');
+      if (barangList.some(b => b.NamaBarang === nama)) {
+        selBarang.value = nama;
+      } else if (nama) {
+        selBarang.value = '__lainnya__';
+        const manual = row.querySelector('.itemBarangManual');
+        manual.style.display = 'block'; manual.value = nama;
+      }
+      row.querySelector('.itemJumlah').value = isi.jumlah;
+      const satuan = String(isi.satuan || '');
+      if (satuan && !SATUAN_OPTIONS.includes(satuan)) {
+        const manualSatuan = row.querySelector('.itemSatuanManual');
+        manualSatuan.style.display = 'block'; manualSatuan.value = satuan;
+      }
+    }
   }
 
   window.toggleSatuanManual = function (sel) {
@@ -396,39 +441,60 @@ async function renderBuatNota(content) {
     // sendiri satuan dari dropdown, sama seperti memilih Nama Barang.
   };
 
-  document.getElementById('addItemBtn').addEventListener('click', addItemRow);
-  addItemRow();
+  document.getElementById('addItemBtn').addEventListener('click', () => addItemRow());
+  if (modeUbah && detail.items.length) {
+    detail.items.forEach(it => addItemRow({ namaBarang: it.NamaBarang, jumlah: it.JumlahDiminta, satuan: it.Satuan }));
+  } else {
+    addItemRow();
+  }
 
   document.getElementById('submitNotaBtn').addEventListener('click', async () => {
     const items = [];
-    let satuanKosong = false;
+    let satuanKosong = false, jumlahSalah = false;
     itemsWrap.querySelectorAll('.grid-2').forEach(row => {
       const sel = row.querySelector('.itemBarang');
-      const namaBarang = sel.value === '__lainnya__' ? row.querySelector('.itemBarangManual').value : sel.value;
+      const namaBarang = (sel.value === '__lainnya__' ? row.querySelector('.itemBarangManual').value : sel.value).trim();
       const jumlah = row.querySelector('.itemJumlah').value;
       const satuanSel = row.querySelector('.itemSatuan');
-      const satuan = satuanSel.value === '__lainnya__' ? row.querySelector('.itemSatuanManual').value : satuanSel.value;
+      const satuan = (satuanSel.value === '__lainnya__' ? row.querySelector('.itemSatuanManual').value : satuanSel.value).trim();
       if (namaBarang && jumlah) {
         if (!satuan) satuanKosong = true;
+        if (!(Number(jumlah) >= 1) || !Number.isInteger(Number(jumlah))) jumlahSalah = true;
         items.push({ namaBarang, jumlah: Number(jumlah), satuan });
       }
     });
     if (!items.length) return showToast('Tambahkan minimal satu barang.', 'error');
+    if (jumlahSalah) return showToast('Jumlah setiap barang harus bilangan bulat minimal 1.', 'error');
     if (satuanKosong) return showToast('Pilih satuan untuk setiap barang.', 'error');
 
     const btn = document.getElementById('submitNotaBtn');
-    btn.disabled = true; btn.textContent = 'Mengirim...';
+    const teksAsli = btn.textContent;
+    btn.disabled = true; btn.textContent = modeUbah ? 'Menyimpan...' : 'Mengirim...';
     try {
-      const res = await apiPost('createNota', {
-        pemohonEmail: currentUser.email,
-        bidangKode: document.getElementById('fBidang').value,
-        items
-      });
+      const res = modeUbah
+        ? await apiPost('editNota', { noNota: nota.NoNota, pemohonEmail: currentUser.email, items })
+        : await apiPost('createNota', { pemohonEmail: currentUser.email, bidangKode: document.getElementById('fBidang').value, items });
       showToast(res.message);
       location.hash = '#/detail/' + encodeURIComponent(res.noNota);
-    } catch (err) { btn.disabled = false; btn.textContent = 'Ajukan Nota'; }
+    } catch (err) { btn.disabled = false; btn.textContent = teksAsli; }
   });
 }
+
+// Pemohon boleh mengubah/menghapus nota MILIKNYA selama status masih Diajukan
+function bisaDiubahPemohon(n) {
+  return !!currentUser && currentUser.role === 'Pemohon' && n && n.Status === 'Diajukan'
+    && String(n.PemohonEmail || '').trim().toLowerCase() === String(currentUser.email || '').trim().toLowerCase();
+}
+
+window.hapusNotaPemohon = async function (noNotaEnc) {
+  const noNota = decodeURIComponent(noNotaEnc);
+  if (!confirm('Hapus nota ' + noNota + '?\n\nNota beserta daftar barangnya akan dihapus permanen dan tidak bisa dikembalikan.')) return;
+  try {
+    const r = await apiPost('hapusNota', { noNota, pemohonEmail: currentUser.email });
+    showToast(r.message);
+    if (location.hash === '#/nota-saya') router(); else location.hash = '#/nota-saya';
+  } catch (err) { /* pesan error sudah tampil dari apiPost */ }
+};
 
 // ------------------------------------------------------------
 // DAFTAR NOTA (dipakai untuk: Nota Saya, Menunggu Paraf, Tinjau Persetujuan, Proses Barang)
@@ -446,7 +512,7 @@ async function renderNotaList(content, opts) {
   <div class="chip-row" id="statusFilter">
     ${[['Semua', 'Semua']].concat(TAHAP.map(t => [t.status, t.label]), [['Ditolak', 'Ditolak']]).map(([s, lbl]) => `<span class="chip-filter ${s === (opts.status || 'Semua') ? 'active' : ''}" data-status="${s}">${lbl}</span>`).join('')}
   </div>
-  <div class="card">${renderNotaTable(res.data)}</div>`;
+  <div class="card">${renderNotaTable(res.data, { aksiPemohon: currentUser.role === 'Pemohon' })}</div>`;
 
   document.getElementById('clearSearch')?.addEventListener('click', (e) => { e.preventDefault(); sessionSearchQuery = ''; router(); });
   document.querySelectorAll('#statusFilter .chip-filter').forEach(chip => {
@@ -457,7 +523,7 @@ async function renderNotaList(content, opts) {
       if (sessionSearchQuery) p.q = sessionSearchQuery;
       const r = await apiGet('getNotaList', p);
       document.querySelectorAll('#statusFilter .chip-filter').forEach(c => c.classList.toggle('active', c === chip));
-      content.querySelector('.card').innerHTML = renderNotaTable(r.data);
+      content.querySelector('.card').innerHTML = renderNotaTable(r.data, { aksiPemohon: currentUser.role === 'Pemohon' });
     });
   });
 }
@@ -483,6 +549,12 @@ async function renderDetail(content, noNota) {
       <button class="btn btn-outline btn-sm" id="lihatPdfBtn">👁️ Lihat PDF</button>
       <button class="btn btn-outline btn-sm" id="unduhPdfBtn">⬇️ Unduh PDF</button></div>
   </div>
+
+  ${bisaDiubahPemohon(n) ? `<div class="info-banner info-warning" style="display:flex;justify-content:space-between;align-items:center;gap:.75rem;flex-wrap:wrap;">
+    <span>✏️ Nota ini belum diparaf atasan, jadi masih bisa Anda ubah atau hapus.</span>
+    <span style="white-space:nowrap;"><a class="btn btn-outline btn-sm" href="#/edit-nota/${encodeURIComponent(n.NoNota)}">✏️ Edit Nota</a>
+      <button type="button" class="btn btn-danger btn-sm" id="hapusNotaBtn">🗑️ Hapus Nota</button></span>
+  </div>` : ''}
 
   ${renderBannerStatus(n)}
 
@@ -582,6 +654,8 @@ async function renderDetail(content, noNota) {
       link.click();
     } catch (err) {}
   });
+
+  document.getElementById('hapusNotaBtn')?.addEventListener('click', () => hapusNotaPemohon(encodeURIComponent(n.NoNota)));
 
   attachDetailActionHandlers(n, items);
 }
