@@ -160,7 +160,6 @@ table.data-table { width: 100%; border-collapse: collapse; }
 .data-table th { background: var(--surface-canvas); text-transform: uppercase; font-size: 11px; letter-spacing: .03em; color: #64748B; text-align: left; padding: .7rem .8rem; border-bottom: 1px solid var(--border-subtle); }
 .data-table td { padding: .8rem; border-bottom: 1px solid var(--surface-subtle); font-size: 13.5px; vertical-align: top; }
 .data-table tr:hover td { background: var(--surface-canvas); }
-.row-link { cursor: pointer; }
 .no-nota-cell { color: var(--primary); font-weight: 600; }
 
 /* ---------- Item review card ---------- */
@@ -181,8 +180,11 @@ table.data-table { width: 100%; border-collapse: collapse; }
 .section-title { font-size: 18px; font-weight: 600; margin: 0 0 1rem; }
 .text-muted { color: var(--text-muted); }
 .flex-between { display: flex; align-items: center; justify-content: space-between; gap: .5rem; flex-wrap: wrap; }
-.chip-filter { display: inline-flex; gap: .4rem; padding: .4rem .9rem; border-radius: var(--radius-full); border: 1px solid var(--border-subtle); font-size: 12.5px; font-weight: 600; color: var(--text-secondary); background: #fff; }
+.chip-filter { display: inline-flex; gap: .4rem; padding: .4rem .9rem; border-radius: var(--radius-full); border: 1px solid var(--border-subtle); font-size: 12.5px; font-weight: 600; color: var(--text-secondary); background: #fff; cursor: pointer; user-select: none; transition: background .15s, border-color .15s, color .15s; }
+.chip-filter:hover { border-color: var(--primary); color: var(--primary); }
 .chip-filter.active { background: var(--primary); border-color: var(--primary); color: #fff; }
+.chip-filter.active:hover { color: #fff; }
+.row-link { cursor: pointer; }
 .chip-row { display: flex; gap: .5rem; flex-wrap: wrap; margin-bottom: 1rem; }
 .empty-state { text-align: center; padding: 3rem 1rem; color: var(--text-muted); }
 .grid-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 1rem; }
