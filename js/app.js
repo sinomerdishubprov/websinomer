@@ -556,7 +556,7 @@ async function renderDetail(content, noNota) {
       <button type="button" class="btn btn-danger btn-sm" id="hapusNotaBtn">🗑️ Hapus Nota</button></span>
   </div>` : ''}
 
-  ${renderBannerStatus(n)}
+  ${renderBannerStatus(n, items)}
 
   <div class="two-col">
     <div>
@@ -573,11 +573,12 @@ async function renderDetail(content, noNota) {
       <div class="card" style="margin-bottom:1rem;">
         <h3 class="section-title" style="font-size:15px;">Daftar Barang</h3>
         <div class="table-wrap"><table class="data-table">
-          <thead><tr><th>Barang</th><th>Satuan</th><th>Diminta</th><th>Disetujui</th><th>Keputusan</th><th>Catatan</th></tr></thead>
+          <thead><tr><th>Barang</th><th>Satuan</th><th>Diminta</th><th>Disetujui</th>${adaBast ? '<th>Diserahkan</th>' : ''}<th>Keputusan</th><th>Catatan</th></tr></thead>
           <tbody id="itemsBody">${items.map(it => `
             <tr>
               <td>${it.NamaBarang}</td>
               <td>${it.Satuan}</td><td>${it.JumlahDiminta}</td><td>${it.StatusItem ? it.JumlahDisetujui : '-'}</td>
+              ${adaBast ? `<td><b>${jumlahDiserahkan(it)}</b>${it.KeteranganSerah ? `<div class="text-muted" style="font-size:11px;">${esc(it.KeteranganSerah)}</div>` : ''}</td>` : ''}
               <td>${it.StatusItem ? statusBadge(it.StatusItem === 'Penuh' ? 'Selesai' : it.StatusItem === 'Ditolak' ? 'Ditolak' : 'Diproses') + ' ' + it.StatusItem : '<span class="text-muted">Menunggu</span>'}</td>
               <td>${it.Alasan || '-'}</td>
             </tr>`).join('')}</tbody>
@@ -662,7 +663,16 @@ async function renderDetail(content, noNota) {
 }
 
 // Pesan singkat di atas detail nota sesuai kondisinya
-function renderBannerStatus(n) {
+// Jumlah yang benar-benar diserahkan (berita acara lama: sama dengan yang disetujui)
+function jumlahDiserahkan(it) {
+  const kosong = v => v === '' || v === null || v === undefined;
+  return kosong(it.JumlahDiserahkan) ? (kosong(it.JumlahDisetujui) ? 0 : Number(it.JumlahDisetujui)) : Number(it.JumlahDiserahkan);
+}
+
+function renderBannerStatus(n, items) {
+  if (n.Status === 'Ditolak' && n.AlasanPembatalan) {
+    return `<div class="info-banner info-danger">❌ <b>Serah terima dibatalkan</b> karena stok tidak tersedia saat pengambilan. Alasan: ${esc(n.AlasanPembatalan)}. Silakan ajukan nota baru bila masih diperlukan.</div>`;
+  }
   if (n.Status === 'Ditolak') {
     const alasan = n.PemeriksaNama
       ? 'Seluruh barang tidak dapat dipenuhi Bagian Perlengkapan. Alasan per barang ada di tabel Daftar Barang.'
@@ -675,7 +685,9 @@ function renderBannerStatus(n) {
   if (n.Status === 'Selesai' && n.BastTanggal) {
     const wakil = n.BastPihakKeduaNama && n.BastPihakKeduaNama !== n.PemohonNama
       ? ` kepada <b>${n.BastPihakKeduaNama}</b> (mewakili pemohon)` : '';
-    return `<div class="info-banner info-success">🤝 <b>Barang sudah diserahterimakan</b>${wakil} pada ${fmtTgl(n.BastTanggal, false)}. Berita Acara Serah Terima ada di halaman 2 PDF.</div>`;
+    const kurang = (items || []).filter(it => jumlahDiserahkan(it) < (Number(it.JumlahDisetujui) || 0)).length;
+    const catatanKurang = kurang ? ` <b>${kurang} barang tidak diserahkan penuh</b> karena stok berkurang, lihat kolom Diserahkan.` : '';
+    return `<div class="info-banner ${kurang ? 'info-warning' : 'info-success'}">🤝 <b>Barang sudah diserahterimakan</b>${wakil} pada ${fmtTgl(n.BastTanggal, false)}.${catatanKurang} Berita Acara Serah Terima ada di halaman 2 PDF.</div>`;
   }
   return '';
 }
@@ -739,6 +751,20 @@ function renderAksiRole(n, items, res) {
         <tr><td class="text-muted">Pihak Pertama<br>(yang menyerahkan)</td><td>${htmlPihakBast(v)}</td></tr>
         <tr><td class="text-muted">Pihak Kedua<br>(yang menerima)</td><td id="pratinjauPihakKedua">${htmlPihakBast(pemohon)}</td></tr>
       </table>
+      <div style="font-weight:600;font-size:13px;margin-bottom:.25rem;">Barang yang diserahkan</div>
+      <div class="text-muted" style="font-size:12px;margin-bottom:.5rem;">Ubah jumlahnya bila stok berkurang saat pengambilan. Jumlah tidak boleh melebihi yang disetujui, dan keterangan wajib diisi bila kurang.</div>
+      <div class="table-wrap" style="margin-bottom:1rem;"><table class="data-table">
+        <thead><tr><th>Barang</th><th>Disetujui</th><th>Diserahkan</th><th>Keterangan</th></tr></thead>
+        <tbody>${items.filter(it => (Number(it.JumlahDisetujui) || 0) > 0).map(it => {
+          const d = Number(it.JumlahDisetujui);
+          return `<tr class="baris-serah" data-id="${esc(it.ID)}" data-disetujui="${d}" data-nama="${esc(it.NamaBarang)}">
+            <td>${esc(it.NamaBarang)}</td>
+            <td style="white-space:nowrap;">${d} ${esc(it.Satuan)}</td>
+            <td><input type="number" class="inputSerah" min="0" max="${d}" value="${d}" style="width:80px;padding:.4rem .5rem;border:1px solid #CBD5E1;border-radius:6px;font:inherit;"></td>
+            <td><input class="inputKetSerah" placeholder="Wajib bila kurang" style="width:100%;min-width:160px;padding:.4rem .5rem;border:1px solid #CBD5E1;border-radius:6px;font:inherit;"></td>
+          </tr>`;
+        }).join('')}</tbody>
+      </table></div>
       <label style="display:flex;align-items:center;gap:.5rem;font-size:13px;font-weight:600;cursor:pointer;">
         <input type="checkbox" id="cbDiwakilkan" style="width:auto;margin:0;"> Barang diambil oleh orang lain (bukan pemohon)
       </label>
@@ -755,6 +781,14 @@ function renderAksiRole(n, items, res) {
       </div>
       <div id="bannerJabatan" class="info-banner info-warning" style="display:none;margin-top:.75rem;">Jabatan yang kosong akan tertulis "-" di berita acara. Minta Admin mengisinya di menu Data Master → Pegawai sebelum menerbitkan.</div>
       <button class="btn btn-primary" id="btnTerbitkanBast" style="margin-top:.75rem;">📝 Terbitkan Berita Acara</button>
+      <div style="margin-top:1.25rem;padding-top:1rem;border-top:1px solid var(--border-subtle);">
+        <div class="text-muted" style="font-size:12px;margin-bottom:.5rem;">Semua barang ternyata habis saat diambil?</div>
+        <button type="button" class="btn btn-danger btn-sm" id="btnTampilBatal">Batalkan: stok tidak tersedia</button>
+        <div id="wrapBatal" style="display:none;margin-top:.75rem;">
+          <div class="field"><label>Alasan pembatalan (wajib)</label><textarea id="alasanBatal" placeholder="mis. Seluruh barang habis saat pemohon datang mengambil"></textarea></div>
+          <button type="button" class="btn btn-danger" id="btnKonfirmasiBatal">Konfirmasi Pembatalan</button>
+        </div>
+      </div>
     </div>`;
   }
 
@@ -906,19 +940,70 @@ function attachDetailActionHandlers(n, items, res) {
     ['wakilNama', 'wakilNip', 'wakilJabatan'].forEach(id => document.getElementById(id).addEventListener('input', perbarui));
     perbarui();
 
+    // Jumlah diserahkan per barang: tandai keterangan yang wajib diisi
+    const kumpulkanSerah = () => {
+      const hasil = [];
+      for (const tr of document.querySelectorAll('.baris-serah')) {
+        const nama = tr.dataset.nama;
+        const disetujui = Number(tr.dataset.disetujui);
+        const teksJumlah = tr.querySelector('.inputSerah').value.trim();
+        const jumlah = Number(teksJumlah);
+        const ket = tr.querySelector('.inputKetSerah').value.trim();
+        if (teksJumlah === '' || !Number.isInteger(jumlah) || jumlah < 0 || jumlah > disetujui) {
+          return { error: 'Jumlah diserahkan untuk "' + nama + '" harus 0 sampai ' + disetujui + '.' };
+        }
+        if (jumlah < disetujui && !ket) return { error: 'Isi keterangan untuk "' + nama + '" karena jumlah diserahkan kurang dari yang disetujui.' };
+        hasil.push({ id: tr.dataset.id, jumlahDiserahkan: jumlah, keterangan: ket, nama: nama, disetujui: disetujui });
+      }
+      if (!hasil.some(h => h.jumlahDiserahkan > 0)) {
+        return { error: 'Tidak ada barang yang diserahkan. Bila semua stok habis, gunakan tombol "Batalkan: stok tidak tersedia".' };
+      }
+      return { hasil: hasil };
+    };
+    document.querySelectorAll('.baris-serah').forEach(tr => {
+      const tandai = () => {
+        const kurang = Number(tr.querySelector('.inputSerah').value) < Number(tr.dataset.disetujui);
+        const ket = tr.querySelector('.inputKetSerah');
+        ket.style.borderColor = kurang && !ket.value.trim() ? 'var(--status-danger-text)' : '#CBD5E1';
+      };
+      tr.querySelector('.inputSerah').addEventListener('input', tandai);
+      tr.querySelector('.inputKetSerah').addEventListener('input', tandai);
+    });
+
     document.getElementById('btnTerbitkanBast').addEventListener('click', () => {
       const p = penerimaSaatIni();
       if (p.mode === 'kosong') return showToast('Pilih penerima barang terlebih dahulu.', 'error');
       if (p.mode === 'manual' && (!p.nama || !p.jabatan)) return showToast('Isi nama dan jabatan penerima barang.', 'error');
-      const pesan = p.mode === 'pemohon'
+      const serah = kumpulkanSerah();
+      if (serah.error) return showToast(serah.error, 'error');
+      const kurang = serah.hasil.filter(h => h.jumlahDiserahkan < h.disetujui);
+      let pesan = p.mode === 'pemohon'
         ? 'Pastikan pemohon (' + pemohon.nama + ') sudah menerima barang.'
         : 'Barang diterima oleh ' + p.nama + ' mewakili ' + pemohon.nama + '. Pemohon akan diberi tahu lewat email.';
+      if (kurang.length) {
+        pesan += '\n\nBarang yang tidak diserahkan penuh:\n' + kurang.map(h => '- ' + h.nama + ': ' + h.jumlahDiserahkan + ' dari ' + h.disetujui).join('\n');
+      }
       if (!confirm(pesan + '\n\nTerbitkan Berita Acara Serah Terima sekarang?')) return;
       const penerima = p.mode === 'pemohon' ? { mode: 'pemohon' }
         : p.mode === 'pegawai' ? { mode: 'pegawai', email: p.email, nip: p.nip, nama: p.nama }
         : { mode: 'manual', nama: p.nama, nip: p.nip, jabatan: p.jabatan };
       jalankanAksi('btnTerbitkanBast', 'Menerbitkan... (membuat PDF, mohon tunggu)', () => apiPost('terbitkanBast', {
-        noNota: n.NoNota, petugasEmail: currentUser.email, penerima
+        noNota: n.NoNota, petugasEmail: currentUser.email, penerima,
+        serah: serah.hasil.map(h => ({ id: h.id, jumlahDiserahkan: h.jumlahDiserahkan, keterangan: h.keterangan }))
+      }));
+    });
+
+    // Semua stok habis saat diambil -> batalkan serah terima
+    document.getElementById('btnTampilBatal').addEventListener('click', () => {
+      const w = document.getElementById('wrapBatal');
+      w.style.display = w.style.display === 'none' ? 'block' : 'none';
+    });
+    document.getElementById('btnKonfirmasiBatal').addEventListener('click', () => {
+      const alasan = document.getElementById('alasanBatal').value.trim();
+      if (!alasan) return showToast('Isi alasan pembatalan.', 'error');
+      if (!confirm('Batalkan serah terima nota ini?\n\nNota akan berstatus Ditolak dan pemohon diberi tahu. Tindakan ini tidak bisa diurungkan.')) return;
+      jalankanAksi('btnKonfirmasiBatal', 'Membatalkan...', () => apiPost('batalkanSerahTerima', {
+        noNota: n.NoNota, petugasEmail: currentUser.email, alasan
       }));
     });
   }
