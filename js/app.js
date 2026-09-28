@@ -858,8 +858,8 @@ function attachDetailActionHandlers(n, items, res) {
     const penerimaSaatIni = () => {
       if (!cbWakil.checked) return Object.assign({ mode: 'pemohon' }, pemohon);
       if (sel.value === '__manual__') return { mode: 'manual', nama: nilai('wakilNama'), nip: nilai('wakilNip'), jabatan: nilai('wakilJabatan') };
-      const p = (daftarPegawai || []).find(x => x.Email === sel.value);
-      return p ? { mode: 'pegawai', email: p.Email, nama: p.Nama, nip: p.NIP, jabatan: p.Jabatan || '' } : { mode: 'kosong' };
+      const p = sel.value === '' ? null : (daftarPegawai || [])[Number(sel.value)];
+      return p ? { mode: 'pegawai', email: p.Email || '', nama: p.Nama, nip: p.NIP || '', jabatan: p.Jabatan || '' } : { mode: 'kosong' };
     };
     const perbarui = () => {
       const p = penerimaSaatIni();
@@ -880,11 +880,20 @@ function attachDetailActionHandlers(n, items, res) {
         try {
           const r = await apiGet('getMasterData', { jenis: 'pegawai' });
           const emailPemohon = String(pemohon.email || '').trim().toLowerCase();
+          // Semua pegawai yang punya nama ikut tampil, termasuk yang belum punya email.
+          // Hanya pemohon sendiri yang tidak dimasukkan (ia pilihan bawaan).
+          const namaPemohon = String(pemohon.nama || '').trim().toLowerCase();
+          const nipPemohon = String(pemohon.nip || '').trim();
           daftarPegawai = r.data
-            .filter(p => p.Email && String(p.Email).trim().toLowerCase() !== emailPemohon)
+            .filter(p => String(p.Nama || '').trim())
+            .filter(p => {
+              const email = String(p.Email || '').trim().toLowerCase();
+              if (email) return email !== emailPemohon;
+              return !(String(p.Nama).trim().toLowerCase() === namaPemohon && String(p.NIP || '').trim() === nipPemohon);
+            })
             .sort((a, b) => String(a.Nama).localeCompare(String(b.Nama)));
           sel.innerHTML = '<option value="">-- pilih pegawai --</option>'
-            + daftarPegawai.map(p => `<option value="${esc(p.Email)}">${esc(p.Nama)}${p.Jabatan ? ' — ' + esc(p.Jabatan) : ''}</option>`).join('')
+            + daftarPegawai.map((p, i) => `<option value="${i}">${esc(p.Nama)}${p.Jabatan ? ' — ' + esc(p.Jabatan) : ''}</option>`).join('')
             + opsiManual;
         } catch (err) {
           daftarPegawai = [];
@@ -906,7 +915,7 @@ function attachDetailActionHandlers(n, items, res) {
         : 'Barang diterima oleh ' + p.nama + ' mewakili ' + pemohon.nama + '. Pemohon akan diberi tahu lewat email.';
       if (!confirm(pesan + '\n\nTerbitkan Berita Acara Serah Terima sekarang?')) return;
       const penerima = p.mode === 'pemohon' ? { mode: 'pemohon' }
-        : p.mode === 'pegawai' ? { mode: 'pegawai', email: p.email }
+        : p.mode === 'pegawai' ? { mode: 'pegawai', email: p.email, nip: p.nip, nama: p.nama }
         : { mode: 'manual', nama: p.nama, nip: p.nip, jabatan: p.jabatan };
       jalankanAksi('btnTerbitkanBast', 'Menerbitkan... (membuat PDF, mohon tunggu)', () => apiPost('terbitkanBast', {
         noNota: n.NoNota, petugasEmail: currentUser.email, penerima
