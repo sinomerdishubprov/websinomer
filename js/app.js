@@ -65,6 +65,7 @@ const NAV_ITEMS = {
     ['#/periksa-stok', '📦 Periksa Stok'],
     ['#/serah-terima', '🤝 Serah Terima'],
     ['#/stok-barang', '🗃️ Stok Barang'],
+    ['#/data-master', '🗂️ Master Barang'],
     ['#/laporan', '📊 Laporan & Rekap']
   ]
 };
@@ -1628,16 +1629,25 @@ function aksiMaster(jenis, aksi, data, pesan, ubah, sesudahBerhasil) {
   return kirimInstan({ tabel: Array.isArray(jenis) ? jenis : [jenis], aksi, data, pesan, ubahLokal: ubah, sesudahBerhasil }).catch(() => {});
 }
 
+// Admin: Barang, Pegawai, Bidang. Bagian Perlengkapan: Master Barang saja.
 function renderDataMaster(content) {
-  if (currentUser.role !== 'Admin') { content.innerHTML = '<div class="empty-state">Halaman ini khusus Admin.</div>'; return; }
+  const hanyaBarang = currentUser.role === 'Perlengkapan';
+  if (currentUser.role !== 'Admin' && !hanyaBarang) { content.innerHTML = '<div class="empty-state">Halaman ini khusus Admin dan Bagian Perlengkapan.</div>'; return; }
   const master = store; // barang, pegawai, bidang
+  const tabAwal = hanyaBarang ? 'barang' : tabMasterAktif;
 
-  content.innerHTML = `
+  content.innerHTML = hanyaBarang ? `
+  <div class="flex-between" style="flex-wrap:wrap;gap:.75rem;margin-bottom:.25rem;">
+    <h2 class="section-title" style="margin:0;">🗂️ Kelola Master Barang</h2>
+    <a href="#/stok-barang" class="btn btn-outline btn-sm">🗃️ Lihat Stok Barang</a>
+  </div>
+  <p class="text-muted" style="font-size:13px;margin:.25rem 0 1rem;">Tambah, ubah, atau hapus barang yang bisa dipilih pegawai saat membuat nota.</p>
+  <div class="card" id="masterContent"></div>` : `
   <h2 class="section-title">⚙️ Kelola Data Master</h2>
   <div class="chip-row" id="masterTabs">
-    <span class="chip-filter ${tabMasterAktif === 'barang' ? 'active' : ''}" data-tab="barang">Barang</span>
-    <span class="chip-filter ${tabMasterAktif === 'pegawai' ? 'active' : ''}" data-tab="pegawai">Pegawai</span>
-    <span class="chip-filter ${tabMasterAktif === 'bidang' ? 'active' : ''}" data-tab="bidang">Bidang</span>
+    <span class="chip-filter ${tabAwal === 'barang' ? 'active' : ''}" data-tab="barang">Barang</span>
+    <span class="chip-filter ${tabAwal === 'pegawai' ? 'active' : ''}" data-tab="pegawai">Pegawai</span>
+    <span class="chip-filter ${tabAwal === 'bidang' ? 'active' : ''}" data-tab="bidang">Bidang</span>
   </div>
   <div class="card" id="masterContent"></div>`;
 
@@ -1654,13 +1664,21 @@ function renderDataMaster(content) {
         </div>
         <div class="grid-2" style="align-items:end;">
           <div class="field"><label>Stok awal (opsional)</label><input id="mStok" type="number" min="0" placeholder="Kosongkan bila belum dihitung"></div>
-          <div class="field-hint" style="margin-bottom:1rem;">Stok selanjutnya diatur di menu <a href="#/stok-barang">Stok Barang</a> (juga oleh Bagian Perlengkapan).</div>
+          <div class="field-hint" style="margin-bottom:1rem;">Stok selanjutnya diatur di menu <a href="#/stok-barang">Stok Barang</a>.</div>
         </div>
         <button class="btn btn-primary btn-sm" id="mAddBtn">Tambah Barang</button>
-        <div class="table-wrap" style="margin-top:1rem;"><table class="data-table"><thead><tr><th>Nama</th><th>Satuan</th><th>Stok Gudang</th><th></th></tr></thead>
-        <tbody>${master.barang.map((b, i) => `<tr><td>${esc(b.NamaBarang)}</td><td>${esc(b.Satuan)}</td><td>${nilaiStok(b.Stok) === null ? '<span class="text-muted">belum diatur</span>' : nilaiStok(b.Stok)}</td><td style="white-space:nowrap;">
+        <div class="flex-between" style="flex-wrap:wrap;gap:.6rem;margin-top:1.25rem;">
+          <div style="font-weight:600;font-size:13px;">Daftar barang (${master.barang.length})</div>
+          <input id="mCariBarang" placeholder="🔍 Cari nama barang…" style="max-width:260px;width:100%;padding:.45rem .7rem;border:1px solid #CBD5E1;border-radius:8px;font:inherit;font-size:13px;">
+        </div>
+        <div class="table-wrap" style="margin-top:.5rem;"><table class="data-table"><thead><tr><th>Nama</th><th>Satuan</th><th>Stok Gudang</th><th></th></tr></thead>
+        <tbody>${master.barang.map((b, i) => `<tr class="baris-master-barang" data-nama="${esc(normTeks(b.NamaBarang))}"><td>${esc(b.NamaBarang)}</td><td>${esc(b.Satuan)}</td><td>${nilaiStok(b.Stok) === null ? '<span class="text-muted">belum diatur</span>' : nilaiStok(b.Stok)}</td><td style="white-space:nowrap;">
           <button class="btn btn-outline btn-sm" onclick="editMasterBarang(${jsArg(b.NamaBarang)})">Edit</button>
           <button class="btn btn-outline btn-sm" onclick="hapusMaster('barang',${jsArg(b.NamaBarang)})">Hapus</button></td></tr>`).join('')}</tbody></table></div>`;
+      document.getElementById('mCariBarang').addEventListener('input', (e) => {
+        const q = normTeks(e.target.value);
+        box.querySelectorAll('.baris-master-barang').forEach(tr => { tr.style.display = !q || tr.dataset.nama.includes(q) ? '' : 'none'; });
+      });
       document.getElementById('mAddBtn').addEventListener('click', () => {
         const namaBarang = val('mNama').trim(), satuan = val('mSatuan').trim(), teksStok = val('mStok').trim();
         if (!namaBarang || !satuan) return showToast('Nama barang & satuan wajib diisi.', 'error');
@@ -1834,7 +1852,7 @@ function renderDataMaster(content) {
       renderTab(chip.dataset.tab);
     });
   });
-  renderTab(tabMasterAktif);
+  renderTab(tabAwal);
 }
 
 // Kunci pegawai: email; untuk pegawai tanpa email dipakai NIP + nama
@@ -1853,7 +1871,14 @@ window.hapusPegawai = function (kunci) {
 };
 
 window.hapusMaster = function (jenis, value) {
-  if (!confirm('Hapus data ini?')) return;
+  if (jenis === 'barang') {
+    // Stok dicocokkan lewat nama barang: barang berstok yang masih diminta di nota berjalan tidak dihapus dulu
+    const info = petaStokBarang().get(normTeks(value));
+    if (info && info.stok !== null && info.dipesan > 0) {
+      return showToast('Barang "' + value + '" belum bisa dihapus karena masih diminta di nota yang sedang berjalan (' + info.dipesan + '). Hapus setelah nota tersebut selesai atau ditolak.', 'error', 7000);
+    }
+    if (!confirm('Hapus barang "' + value + '" dari daftar?\n\nBarang ini tidak bisa dipilih lagi saat membuat nota dan stoknya tidak dihitung lagi.')) return;
+  } else if (!confirm('Hapus data ini?')) return;
   const kunciKolom = { barang: 'NamaBarang', pegawai: 'Email', bidang: 'KodeBidang' }[jenis];
   aksiMaster(jenis, 'deleteMaster', { jenis, value }, 'Data dihapus.', () => {
     store[jenis] = store[jenis].filter(o => String(o[kunciKolom]) !== String(value));
@@ -1969,6 +1994,7 @@ function renderStokBarang(content) {
   <div class="flex-between" style="flex-wrap:wrap;gap:.75rem;margin-bottom:.25rem;">
     <h2 class="section-title" style="margin:0;">🗃️ Stok Barang</h2>
     ${currentUser.role === 'Pemohon' ? '<a href="#/buat-nota" class="btn btn-primary btn-sm">➕ Ajukan Nota Baru</a>' : ''}
+    ${kelola ? '<a href="#/data-master" class="btn btn-outline btn-sm">🗂️ Tambah / Ubah Barang</a>' : ''}
   </div>
   <p class="text-muted" style="font-size:13px;margin:.25rem 0 1rem;">${kelola
     ? 'Atur stok saat barang masuk, ada barang rusak/hilang, atau setelah hitung fisik. Stok gudang berkurang otomatis saat Berita Acara Serah Terima terbit. <b>Tersedia</b> = stok gudang dikurangi barang yang sedang dipesan di nota yang masih berjalan.'
