@@ -37,6 +37,7 @@ const NAV_ITEMS = {
   Admin: [
     ['#/dashboard', '🏠 Dashboard / Beranda'],
     ['#/nota-saya', '📄 Semua Nota'],
+    ['#/stok-barang', '🗃️ Stok Barang'],
     ['#/laporan', '📊 Laporan & Rekapitulasi'],
     ['#/data-master', '⚙️ Data Master']
   ],
@@ -44,22 +45,26 @@ const NAV_ITEMS = {
     ['#/dashboard', '🏠 Dashboard / Beranda'],
     ['#/buat-nota', '➕ Buat Nota Baru'],
     ['#/nota-saya', '📄 Nota Saya'],
+    ['#/stok-barang', '🗃️ Stok Barang'],
     ['#/laporan', '📊 Laporan & Rekap']
   ],
   'Atasan Mengetahui': [
     ['#/dashboard', '🏠 Dashboard / Beranda'],
     ['#/menunggu-paraf', '✍️ Menunggu Paraf'],
+    ['#/stok-barang', '🗃️ Stok Barang'],
     ['#/laporan', '📊 Laporan & Rekap']
   ],
   'Atasan Menyetujui': [
     ['#/dashboard', '🏠 Dashboard / Beranda'],
     ['#/tinjau-persetujuan', '🔍 Tinjau Persetujuan'],
+    ['#/stok-barang', '🗃️ Stok Barang'],
     ['#/laporan', '📊 Laporan & Rekap']
   ],
   Perlengkapan: [
     ['#/dashboard', '🏠 Dashboard / Beranda'],
     ['#/periksa-stok', '📦 Periksa Stok'],
     ['#/serah-terima', '🤝 Serah Terima'],
+    ['#/stok-barang', '🗃️ Stok Barang'],
     ['#/laporan', '📊 Laporan & Rekap']
   ]
 };
@@ -155,6 +160,7 @@ function router(opsi) {
     else if (hash.startsWith('#/detail/')) renderDetail(content, decodeURIComponent(hash.split('#/detail/')[1]));
     else if (hash.startsWith('#/edit-nota/')) renderBuatNota(content, decodeURIComponent(hash.split('#/edit-nota/')[1]));
     else if (hash === '#/laporan') renderLaporan(content);
+    else if (hash === '#/stok-barang') renderStokBarang(content);
     else if (hash === '#/data-master') renderDataMaster(content);
     else if (hash === '#/ganti-password') renderGantiPassword(content);
     else if (hash === '#/panduan') renderPanduan(content);
@@ -408,6 +414,7 @@ function renderDashboard(content) {
     ${currentUser.role === 'Pemohon' ? `<a href="#/buat-nota" class="btn btn-primary">➕ Ajukan Nota Baru</a>` : ''}
   </div>
 
+  ${htmlPeringatanStokHabis()}
   <div class="stats-grid">
     <div class="card stat-card"><div class="stat-icon" style="background:var(--pastel-blue);">📋</div><div><div class="stat-value">${s.totalNotaBulanIni}</div><div class="stat-label">NOTA BULAN INI</div><div class="stat-sub">✅ ${s.selesaiBulanIni} Selesai</div></div></div>
     <div class="card stat-card"><div class="stat-icon" style="background:var(--pastel-amber);">❗</div><div><div class="stat-value">${s.butuhTindakan}</div><div class="stat-label">BUTUH TINDAKAN</div><div class="stat-sub">${subTindakan}</div></div></div>
@@ -517,6 +524,62 @@ function renderBuatNota(content, editNoNota) {
 
   const itemsWrap = document.getElementById('itemsWrap');
   let itemCount = 0;
+  // Stok tersedia tiap barang. Saat mengubah nota, pesanan nota ini sendiri tidak dihitung.
+  const petaStok = petaStokBarang(modeUbah ? nota.NoNota : null);
+  const infoStokNama = (nama) => petaStok.get(normTeks(nama)) || null;
+
+  function opsiBarangHtml(b) {
+    const info = infoStokNama(b.NamaBarang);
+    const nama = esc(b.NamaBarang);
+    if (info && info.tersedia === 0) return `<option value="${nama}" data-satuan="${esc(b.Satuan)}" disabled>${nama} — HABIS</option>`;
+    const ket = info && info.tersedia !== null ? ` — stok ${info.tersedia} ${esc(b.Satuan)}` : '';
+    return `<option value="${nama}" data-satuan="${esc(b.Satuan)}">${nama}${ket}</option>`;
+  }
+
+  function namaBarangBaris(row) {
+    const sel = row.querySelector('.itemBarang');
+    return (sel.value === '__lainnya__' ? row.querySelector('.itemBarangManual').value : sel.value).trim();
+  }
+
+  // Tampilkan stok tersedia di bawah tiap baris dan batasi jumlahnya.
+  // Barang yang sama di beberapa baris berbagi stok yang sama.
+  function perbaruiStokSemua(barisDiubah) {
+    const rows = Array.from(itemsWrap.querySelectorAll('.baris-barang'));
+    rows.forEach(row => {
+      const infoEl = row.querySelector('.itemStokInfo');
+      const jumlahEl = row.querySelector('.itemJumlah');
+      const info = infoStokNama(namaBarangBaris(row));
+      if (!info) { infoEl.innerHTML = ''; infoEl.style.display = 'none'; jumlahEl.removeAttribute('max'); return; }
+      infoEl.style.display = 'block';
+      const satuan = esc(info.barang.Satuan);
+      if (info.tersedia === null) {
+        infoEl.innerHTML = '<span class="text-muted">Stok barang ini belum diatur Bagian Perlengkapan.</span>';
+        jumlahEl.removeAttribute('max');
+        return;
+      }
+      const kunci = normTeks(info.barang.NamaBarang);
+      const dipakaiLain = rows.filter(r => r !== row && normTeks(namaBarangBaris(r)) === kunci)
+        .reduce((t, r) => t + (Number(r.querySelector('.itemJumlah').value) || 0), 0);
+      const maks = Math.max(0, info.tersedia - dipakaiLain);
+      if (info.tersedia === 0) {
+        infoEl.innerHTML = '<span class="text-danger" style="font-weight:600;">✖ Stok habis.</span> <span class="text-muted">Hapus baris ini atau pilih barang lain.</span>';
+        jumlahEl.removeAttribute('max');
+        return;
+      }
+      if (maks === 0) {
+        infoEl.innerHTML = `<span class="text-danger" style="font-weight:600;">✖ Seluruh stok (${info.tersedia} ${satuan}) sudah diminta di baris lain.</span> <span class="text-muted">Hapus baris ini atau gabungkan jumlahnya.</span>`;
+        jumlahEl.removeAttribute('max');
+        return;
+      }
+      jumlahEl.max = maks;
+      let disesuaikan = false;
+      if (row === barisDiubah && Number(jumlahEl.value) > maks) { jumlahEl.value = maks; disesuaikan = true; }
+      infoEl.innerHTML = `<span style="color:var(--status-selesai-text);font-weight:600;">✔ Stok tersedia: ${info.tersedia} ${satuan}</span>`
+        + (dipakaiLain ? ` <span class="text-muted">(${dipakaiLain} sudah diminta di baris lain, sisa ${maks})</span>` : '')
+        + (disesuaikan ? ` <span style="color:var(--status-diproses-text);font-weight:600;">— jumlah disesuaikan menjadi maksimal ${maks}</span>` : '')
+        + (!disesuaikan && Number(jumlahEl.value) > maks ? ` <span class="text-danger" style="font-weight:600;">— maksimal ${maks}</span>` : '');
+    });
+  }
 
   function satuanOptionsHtml(selected) {
     const inList = SATUAN_OPTIONS.includes(selected);
@@ -530,14 +593,14 @@ function renderBuatNota(content, editNoNota) {
     itemCount++;
     const rowId = 'item_' + itemCount;
     const row = document.createElement('div');
-    row.className = 'grid-2';
+    row.className = 'grid-2 baris-barang';
     row.style.cssText = 'grid-template-columns:2fr 1fr 1fr auto;align-items:end;gap:.6rem;margin-bottom:.6rem;';
     row.id = rowId;
     row.innerHTML = `
       <div class="field" style="margin-bottom:0;"><label>Nama Barang</label>
         <select class="itemBarang" onchange="autoFillSatuan(this)">
           <option value="">-- pilih --</option>
-          ${barangList.map(b => `<option value="${esc(b.NamaBarang)}" data-satuan="${esc(b.Satuan)}">${esc(b.NamaBarang)}</option>`).join('')}
+          ${barangList.map(opsiBarangHtml).join('')}
           <option value="__lainnya__">Lainnya (ketik manual)</option>
         </select>
         <input class="itemBarangManual" style="display:none;margin-top:.4rem;" placeholder="Nama barang lainnya">
@@ -547,8 +610,12 @@ function renderBuatNota(content, editNoNota) {
         <select class="itemSatuan" onchange="toggleSatuanManual(this)">${satuanOptionsHtml(isi ? String(isi.satuan || '') : '')}</select>
         <input class="itemSatuanManual" style="display:none;margin-top:.4rem;" placeholder="Ketik satuan lain">
       </div>
-      <button type="button" class="btn btn-outline btn-sm" onclick="document.getElementById('${rowId}').remove()">✕</button>`;
+      <button type="button" class="btn btn-outline btn-sm btnHapusBaris" title="Hapus baris">✕</button>
+      <div class="itemStokInfo" style="grid-column:1/-1;display:none;font-size:12px;margin-top:-.2rem;"></div>`;
     itemsWrap.appendChild(row);
+    row.querySelector('.btnHapusBaris').addEventListener('click', () => { row.remove(); perbaruiStokSemua(); });
+    row.querySelector('.itemJumlah').addEventListener('input', () => perbaruiStokSemua(row));
+    row.querySelector('.itemBarangManual').addEventListener('input', () => perbaruiStokSemua(row));
 
     if (isi) {
       const nama = String(isi.namaBarang || '');
@@ -567,19 +634,21 @@ function renderBuatNota(content, editNoNota) {
         manualSatuan.style.display = 'block'; manualSatuan.value = satuan;
       }
     }
+    perbaruiStokSemua();
   }
 
   window.toggleSatuanManual = function (sel) {
-    const row = sel.closest('.grid-2');
+    const row = sel.closest('.baris-barang');
     row.querySelector('.itemSatuanManual').style.display = sel.value === '__lainnya__' ? 'block' : 'none';
   };
 
   window.autoFillSatuan = function (sel) {
-    const row = sel.closest('.grid-2');
+    const row = sel.closest('.baris-barang');
     const manual = row.querySelector('.itemBarangManual');
     manual.style.display = sel.value === '__lainnya__' ? 'block' : 'none';
     // Catatan: Satuan SENGAJA tidak diisi otomatis — pemohon tetap memilih
     // sendiri satuan dari dropdown, sama seperti memilih Nama Barang.
+    perbaruiStokSemua(row);
   };
 
   document.getElementById('addItemBtn').addEventListener('click', () => addItemRow());
@@ -595,9 +664,8 @@ function renderBuatNota(content, editNoNota) {
   document.getElementById('submitNotaBtn').addEventListener('click', () => {
     const items = [];
     let satuanKosong = false, jumlahSalah = false;
-    itemsWrap.querySelectorAll('.grid-2').forEach(row => {
-      const sel = row.querySelector('.itemBarang');
-      const namaBarang = (sel.value === '__lainnya__' ? row.querySelector('.itemBarangManual').value : sel.value).trim();
+    itemsWrap.querySelectorAll('.baris-barang').forEach(row => {
+      const namaBarang = namaBarangBaris(row);
       const jumlah = row.querySelector('.itemJumlah').value;
       const satuanSel = row.querySelector('.itemSatuan');
       const satuan = (satuanSel.value === '__lainnya__' ? row.querySelector('.itemSatuanManual').value : satuanSel.value).trim();
@@ -610,6 +678,21 @@ function renderBuatNota(content, editNoNota) {
     if (!items.length) return showToast('Tambahkan minimal satu barang.', 'error');
     if (jumlahSalah) return showToast('Jumlah setiap barang harus bilangan bulat minimal 1.', 'error');
     if (satuanKosong) return showToast('Pilih satuan untuk setiap barang.', 'error');
+    // Jumlah per barang tidak boleh melebihi stok tersedia (barang sama di beberapa baris dijumlahkan).
+    // Draf yang dikirim ulang dicek server saja: bila pengiriman pertama ternyata sudah
+    // tersimpan, pesanannya sendiri ikut terhitung di data browser.
+    const kirimUlangDraf = !modeUbah && !!(draf && draf.idKlien);
+    const totalPerBarang = new Map();
+    items.forEach(it => {
+      const info = infoStokNama(it.namaBarang);
+      if (!info || info.tersedia === null) return;
+      const k = normTeks(info.barang.NamaBarang);
+      totalPerBarang.set(k, { info, jumlah: ((totalPerBarang.get(k) || {}).jumlah || 0) + it.jumlah });
+    });
+    if (!kirimUlangDraf) for (const { info, jumlah } of totalPerBarang.values()) {
+      if (info.tersedia === 0) return showToast('Stok "' + info.barang.NamaBarang + '" sedang habis. Hapus barang ini dari daftar atau pilih barang lain.', 'error', 6000);
+      if (jumlah > info.tersedia) return showToast('Stok "' + info.barang.NamaBarang + '" tidak mencukupi: tersedia ' + info.tersedia + ' ' + info.barang.Satuan + ', diminta ' + jumlah + '.', 'error', 6000);
+    }
 
     const itemLokal = (no) => items.map((it, k) => ({
       ID: no + '-' + (k + 1), NoNota: no, NamaBarang: it.namaBarang, KodeBMN: '', Satuan: it.satuan,
@@ -919,6 +1002,7 @@ function renderAksiRole(n, items, res) {
   }
 
   if (role === 'Perlengkapan' && n.Status === 'Diketahui') {
+    const petaStok = petaStokBarang(n.NoNota); // stok tersedia di luar pesanan nota ini
     return `<div class="card" style="margin-bottom:1rem;">
       <h3 class="section-title" style="font-size:14px;">Tindakan: Periksa Stok Barang</h3>
       <p class="text-muted" style="font-size:12.5px;margin:-.25rem 0 .75rem;">Tentukan ketersediaan tiap barang. Setelah disimpan, nota diteruskan ke Sekretaris untuk disetujui.</p>
@@ -927,6 +1011,7 @@ function renderAksiRole(n, items, res) {
         return `
         <div class="item-review" data-id="${esc(it.ID)}" data-diminta="${d}">
           <div class="item-review-head"><b>${esc(it.NamaBarang)}</b><span class="text-muted">Diminta: ${d} ${esc(it.Satuan)}</span></div>
+          ${htmlStokUntukPemeriksaan(petaStok.get(normTeks(it.NamaBarang)), d)}
           <div class="decision-options">
             <button type="button" class="decision-btn" data-decision="Penuh">✅ Disetujui Penuh</button>
             ${d > 1 ? '<button type="button" class="decision-btn" data-decision="Sebagian">⚠️ Disetujui Sebagian</button>' : ''}
@@ -969,7 +1054,7 @@ function renderAksiRole(n, items, res) {
         <tr><td class="text-muted">Pihak Kedua<br>(yang menerima)</td><td id="pratinjauPihakKedua">${htmlPihakBast(pemohon)}</td></tr>
       </table>
       <div style="font-weight:600;font-size:13px;margin-bottom:.25rem;">Barang yang diserahkan</div>
-      <div class="text-muted" style="font-size:12px;margin-bottom:.5rem;">Ubah jumlahnya bila stok berkurang saat pengambilan. Jumlah tidak boleh melebihi yang disetujui, dan keterangan wajib diisi bila kurang.</div>
+      <div class="text-muted" style="font-size:12px;margin-bottom:.5rem;">Ubah jumlahnya bila stok berkurang saat pengambilan. Jumlah tidak boleh melebihi yang disetujui, dan keterangan wajib diisi bila kurang. Stok gudang otomatis berkurang sesuai jumlah yang diserahkan.</div>
       <div class="table-wrap" style="margin-bottom:1rem;"><table class="data-table">
         <thead><tr><th>Barang</th><th>Disetujui</th><th>Diserahkan</th><th>Keterangan</th></tr></thead>
         <tbody>${items.filter(it => (Number(it.JumlahDisetujui) || 0) > 0).map(it => {
@@ -1022,8 +1107,8 @@ function htmlPihakBast(p) {
 }
 
 // Aksi pada satu nota: hasilnya langsung tampil, pengiriman ke server di latar belakang
-function aksiNotaInstan(n, aksi, data, pesan, ubahNota) {
-  return kirimInstan({ kunci: n.NoNota, aksi, data, pesan, ubahLokal: ubahNota }).catch(() => {});
+function aksiNotaInstan(n, aksi, data, pesan, ubahNota, tambahan) {
+  return kirimInstan({ kunci: n.NoNota, aksi, data, pesan, ubahLokal: ubahNota, tambahan }).catch(() => {});
 }
 
 function attachDetailActionHandlers(n, items, res) {
@@ -1230,8 +1315,9 @@ function attachDetailActionHandlers(n, items, res) {
         noNota: n.NoNota, petugasEmail: currentUser.email, penerima,
         serah: serah.hasil.map(h => ({ id: h.id, jumlahDiserahkan: h.jumlahDiserahkan, keterangan: h.keterangan }))
       }, 'Berita Acara Serah Terima terbit' + (mewakili ? ' (penerima: ' + p.nama + ', mewakili pemohon)' : '') +
-        (kurang.length ? '. ' + kurang.length + ' barang tidak diserahkan penuh' : '') + '. Status nota menjadi Selesai.', () => {
+        (kurang.length ? '. ' + kurang.length + ' barang tidak diserahkan penuh' : '') + '. Status nota menjadi Selesai.', (kunci) => {
         const waktu = sekarangWib();
+        kurangiStokLokal(kunci, n.NoNota, serah.hasil.map(h => ({ nama: h.nama, jumlah: h.jumlahDiserahkan })));
         items.forEach(it => {
           const h = serah.hasil.find(x => String(x.id) === String(it.ID));
           it.JumlahDiserahkan = h ? h.jumlahDiserahkan : (Number(it.JumlahDisetujui) || 0);
@@ -1246,7 +1332,7 @@ function attachDetailActionHandlers(n, items, res) {
         logLokal(n.NoNota, 'Terbitkan Berita Acara', mewakili
           ? 'Barang diterima oleh ' + p.nama + ' mewakili pemohon (' + pemohon.nama + ').'
           : 'Barang diserahkan kepada ' + pemohon.nama + '.');
-      });
+      }, ['barang', 'logStok']);
     });
 
     // Semua stok habis saat diambil -> batalkan serah terima
@@ -1540,7 +1626,7 @@ let tabMasterAktif = 'barang';
 
 function aksiMaster(jenis, aksi, data, pesan, ubah, sesudahBerhasil) {
   closeModal();
-  return kirimInstan({ tabel: [jenis], aksi, data, pesan, ubahLokal: ubah, sesudahBerhasil }).catch(() => {});
+  return kirimInstan({ tabel: Array.isArray(jenis) ? jenis : [jenis], aksi, data, pesan, ubahLokal: ubah, sesudahBerhasil }).catch(() => {});
 }
 
 function renderDataMaster(content) {
@@ -1567,16 +1653,25 @@ function renderDataMaster(content) {
           <div class="field"><label>Nama Barang</label><input id="mNama"></div>
           <div class="field"><label>Satuan</label><input id="mSatuan"></div>
         </div>
+        <div class="grid-2" style="align-items:end;">
+          <div class="field"><label>Stok awal (opsional)</label><input id="mStok" type="number" min="0" placeholder="Kosongkan bila belum dihitung"></div>
+          <div class="field-hint" style="margin-bottom:1rem;">Stok selanjutnya diatur di menu <a href="#/stok-barang">Stok Barang</a> (juga oleh Bagian Perlengkapan).</div>
+        </div>
         <button class="btn btn-primary btn-sm" id="mAddBtn">Tambah Barang</button>
-        <div class="table-wrap" style="margin-top:1rem;"><table class="data-table"><thead><tr><th>Nama</th><th>Satuan</th><th></th></tr></thead>
-        <tbody>${master.barang.map((b, i) => `<tr><td>${esc(b.NamaBarang)}</td><td>${esc(b.Satuan)}</td><td style="white-space:nowrap;">
+        <div class="table-wrap" style="margin-top:1rem;"><table class="data-table"><thead><tr><th>Nama</th><th>Satuan</th><th>Stok Gudang</th><th></th></tr></thead>
+        <tbody>${master.barang.map((b, i) => `<tr><td>${esc(b.NamaBarang)}</td><td>${esc(b.Satuan)}</td><td>${nilaiStok(b.Stok) === null ? '<span class="text-muted">belum diatur</span>' : nilaiStok(b.Stok)}</td><td style="white-space:nowrap;">
           <button class="btn btn-outline btn-sm" onclick="editMasterBarang(${jsArg(b.NamaBarang)})">Edit</button>
           <button class="btn btn-outline btn-sm" onclick="hapusMaster('barang',${jsArg(b.NamaBarang)})">Hapus</button></td></tr>`).join('')}</tbody></table></div>`;
       document.getElementById('mAddBtn').addEventListener('click', () => {
-        const namaBarang = val('mNama').trim(), satuan = val('mSatuan').trim();
+        const namaBarang = val('mNama').trim(), satuan = val('mSatuan').trim(), teksStok = val('mStok').trim();
         if (!namaBarang || !satuan) return showToast('Nama barang & satuan wajib diisi.', 'error');
-        aksiMaster('barang', 'addMasterBarang', { namaBarang, satuan }, 'Barang ditambahkan.',
-          () => store.barang.push({ NamaBarang: namaBarang, Satuan: satuan, KodeBMN: '', Kategori: '' }));
+        if (store.barang.some(b => normTeks(b.NamaBarang) === normTeks(namaBarang))) return showToast('Barang "' + namaBarang + '" sudah ada di daftar.', 'error');
+        const stok = teksStok === '' ? '' : Number(teksStok);
+        if (teksStok !== '' && !(Number.isInteger(stok) && stok >= 0)) return showToast('Stok awal harus bilangan bulat 0 atau lebih.', 'error');
+        aksiMaster(['barang', 'logStok'], 'addMasterBarang', { email: currentUser.email, namaBarang, satuan, stok }, 'Barang ditambahkan.', (kunci) => {
+          store.barang.push({ NamaBarang: namaBarang, Satuan: satuan, KodeBMN: '', Kategori: '', Stok: stok });
+          if (stok !== '') riwayatStokLokal(kunci, { NamaBarang: namaBarang, Jenis: 'Stok Awal', Perubahan: stok, StokSebelum: '', StokSesudah: stok, Keterangan: 'Barang baru ditambahkan ke daftar.' });
+        });
       });
     } else if (tab === 'pegawai') {
       box.innerHTML = `
@@ -1653,6 +1748,12 @@ function renderDataMaster(content) {
       <div style="display:flex;gap:.6rem;"><button class="btn btn-primary" id="eSaveBtn">Simpan</button><button class="btn btn-outline" onclick="closeModal()">Batal</button></div>`);
     document.getElementById('eSaveBtn').addEventListener('click', () => {
       const d = { originalNama: b.NamaBarang, namaBarang: val('eNama'), satuan: val('eSatuan'), kategori: val('eKategori') };
+      const ganti = normTeks(d.namaBarang) !== normTeks(d.originalNama);
+      if (ganti && store.barang.some(o => normTeks(o.NamaBarang) === normTeks(d.namaBarang))) return showToast('Nama barang "' + d.namaBarang.trim() + '" sudah dipakai barang lain.', 'error');
+      const infoAsli = petaStokBarang().get(normTeks(d.originalNama));
+      if (ganti && infoAsli && infoAsli.stok !== null && infoAsli.dipesan > 0) {
+        return showToast('Nama "' + d.originalNama + '" belum bisa diganti karena masih diminta di nota yang sedang berjalan (' + infoAsli.dipesan + ' ' + (infoAsli.barang.Satuan || '') + '). Ganti nama setelah nota tersebut selesai atau ditolak.', 'error', 7000);
+      }
       aksiMaster('barang', 'updateMasterBarang', d, 'Barang berhasil diperbarui.', () => {
         const x = store.barang.find(o => o.NamaBarang === d.originalNama);
         if (x) Object.assign(x, { NamaBarang: d.namaBarang, Satuan: d.satuan, Kategori: d.kategori });
@@ -1757,5 +1858,257 @@ window.hapusMaster = function (jenis, value) {
   const kunciKolom = { barang: 'NamaBarang', pegawai: 'Email', bidang: 'KodeBidang' }[jenis];
   aksiMaster(jenis, 'deleteMaster', { jenis, value }, 'Data dihapus.', () => {
     store[jenis] = store[jenis].filter(o => String(o[kunciKolom]) !== String(value));
+  });
+};
+
+// ------------------------------------------------------------
+// STOK BARANG — tampil untuk semua pengguna. Bagian Perlengkapan & Admin
+// dapat mengatur stok (barang masuk, pengurangan, hitung fisik).
+// Tersedia = stok gudang dikurangi barang yang sedang dipesan di nota berjalan.
+// Stok gudang berkurang otomatis saat Berita Acara Serah Terima terbit.
+// ------------------------------------------------------------
+let filterStokAktif = 'semua';
+let cariStokAktif = '';
+
+function bolehAturStok() {
+  return !!currentUser && (currentUser.role === 'Perlengkapan' || currentUser.role === 'Admin');
+}
+
+function badgeStok(info) {
+  if (!info || info.tersedia === null) return '<span class="badge" style="background:var(--surface-subtle);color:var(--text-secondary);">Belum diatur</span>';
+  if (info.tersedia === 0) return '<span class="badge badge-ditolak">Habis</span>';
+  return '<span class="badge badge-selesai">Tersedia</span>';
+}
+
+// Peringatan di dashboard Perlengkapan/Admin bila ada barang yang habis
+function htmlPeringatanStokHabis() {
+  if (!bolehAturStok()) return '';
+  const habis = Array.from(petaStokBarang().values()).filter(i => i.stok !== null && i.tersedia === 0);
+  if (!habis.length) return '';
+  const nama = habis.slice(0, 3).map(i => esc(i.barang.NamaBarang)).join(', ') + (habis.length > 3 ? ', dan ' + (habis.length - 3) + ' lainnya' : '');
+  return `<div class="info-banner info-warning" style="display:flex;justify-content:space-between;align-items:center;gap:.75rem;flex-wrap:wrap;">
+    <span>⚠️ <b>${habis.length} barang habis</b> sehingga tidak bisa diminta pegawai: ${nama}.</span>
+    <a href="#/stok-barang" class="btn btn-outline btn-sm">Atur Stok</a></div>`;
+}
+
+// Baris info stok pada kartu pemeriksaan stok (Perlengkapan)
+function htmlStokUntukPemeriksaan(info, diminta) {
+  if (!info) return '';
+  if (info.stok === null) return '<div class="text-muted" style="font-size:12px;margin:.25rem 0 .5rem;">📦 Stok barang ini belum diatur.</div>';
+  const kurang = diminta > info.tersedia;
+  return `<div style="font-size:12px;margin:.25rem 0 .5rem;color:${kurang ? 'var(--status-danger-text)' : 'var(--text-secondary)'};">📦 Stok gudang: <b>${info.stok}</b> ${esc(info.barang.Satuan)}`
+    + (info.dipesan ? ` · dipesan nota lain: ${info.dipesan}` : '')
+    + ` · tersedia untuk nota ini: <b>${info.tersedia}</b>${kurang ? ' — kurang dari yang diminta' : ''}</div>`;
+}
+
+// Tampilan instan saat Berita Acara terbit (server melakukan hal yang sama)
+function kurangiStokLokal(kunci, noNota, daftar) {
+  const total = new Map();
+  daftar.forEach(d => {
+    const j = Number(d.jumlah) || 0;
+    if (j > 0) total.set(normTeks(d.nama), (total.get(normTeks(d.nama)) || 0) + j);
+  });
+  store.barang.forEach(b => {
+    const k = normTeks(b.NamaBarang);
+    if (!total.has(k)) return;
+    const diserahkan = total.get(k);
+    total.delete(k);
+    const sebelum = nilaiStok(b.Stok);
+    if (sebelum === null) return;
+    const sesudah = Math.max(0, sebelum - diserahkan);
+    b.Stok = sesudah;
+    riwayatStokLokal(kunci, {
+      NamaBarang: b.NamaBarang, Jenis: 'Serah Terima', Perubahan: sesudah - sebelum, StokSebelum: sebelum, StokSesudah: sesudah,
+      NoNota: noNota, Keterangan: 'Diserahkan ' + diserahkan + ' ' + (b.Satuan || '') + '.'
+    });
+  });
+}
+
+function htmlPerubahanStok(v) {
+  const n = Number(v) || 0;
+  if (n > 0) return `<b style="color:var(--status-selesai-text);">+${n}</b>`;
+  if (n < 0) return `<b style="color:var(--status-danger-text);">−${Math.abs(n)}</b>`;
+  return '<b class="text-muted">0</b>';
+}
+
+function htmlTabelRiwayatStok(list, denganBarang, ringkas) {
+  if (!list.length) return '<div class="empty-state" style="padding:1.25rem;">Belum ada perubahan stok.</div>';
+  if (ringkas) {
+    return `<div style="border:1px solid var(--border-subtle);border-radius:8px;">${list.map((l, i) => `
+      <div style="display:flex;justify-content:space-between;gap:.75rem;padding:.55rem .75rem;font-size:12.5px;${i ? 'border-top:1px solid var(--border-subtle);' : ''}">
+        <div><b>${esc(l.Jenis)}</b> ${htmlPerubahanStok(l.Perubahan)}
+          <div class="text-muted" style="font-size:11.5px;">${l._lokal ? '⏳ ' : ''}${esc(fmtTgl(l.Waktu))} · ${esc(l.Oleh)}${l.Keterangan ? ' · ' + esc(l.Keterangan) : ''}${l.NoNota ? ' · ' + esc(l.NoNota) : ''}</div></div>
+        <div style="white-space:nowrap;font-weight:600;">${l.StokSebelum === '' || l.StokSebelum === undefined ? '' : esc(l.StokSebelum) + ' → '}${esc(l.StokSesudah)}</div>
+      </div>`).join('')}</div>`;
+  }
+  return `<div class="table-wrap"><table class="data-table">
+    <thead><tr><th>Waktu</th>${denganBarang ? '<th>Barang</th>' : ''}<th>Jenis</th><th>Perubahan</th><th>Stok</th><th>Oleh</th><th>Keterangan</th></tr></thead>
+    <tbody>${list.map(l => `<tr>
+      <td style="white-space:nowrap;">${l._lokal ? '<span title="Sedang disimpan">⏳</span> ' : ''}${esc(fmtTgl(l.Waktu))}</td>
+      ${denganBarang ? `<td>${esc(l.NamaBarang)}</td>` : ''}
+      <td style="white-space:nowrap;">${esc(l.Jenis)}</td>
+      <td>${htmlPerubahanStok(l.Perubahan)}</td>
+      <td style="white-space:nowrap;">${l.StokSebelum === '' || l.StokSebelum === undefined ? '' : esc(l.StokSebelum) + ' → '}${esc(l.StokSesudah)}</td>
+      <td>${esc(l.Oleh)}</td>
+      <td>${esc(l.Keterangan)}${l.NoNota ? `${l.Keterangan ? '<br>' : ''}<a href="#/detail/${encodeURIComponent(l.NoNota)}" style="font-size:12px;">${esc(l.NoNota)}</a>` : ''}</td>
+    </tr>`).join('')}</tbody></table></div>`;
+}
+
+function renderStokBarang(content) {
+  const kelola = bolehAturStok();
+  const daftar = Array.from(petaStokBarang().values())
+    .sort((a, b) => String(a.barang.NamaBarang).localeCompare(String(b.barang.NamaBarang), 'id'));
+  const jumlah = {
+    semua: daftar.length,
+    tersedia: daftar.filter(i => i.tersedia !== null && i.tersedia > 0).length,
+    habis: daftar.filter(i => i.tersedia === 0).length,
+    belum: daftar.filter(i => i.tersedia === null).length
+  };
+  const chip = (kunci, label) => `<span class="chip-filter ${filterStokAktif === kunci ? 'active' : ''}" data-filter="${kunci}">${label} (${jumlah[kunci]})</span>`;
+
+  content.innerHTML = `
+  <div class="flex-between" style="flex-wrap:wrap;gap:.75rem;margin-bottom:.25rem;">
+    <h2 class="section-title" style="margin:0;">🗃️ Stok Barang</h2>
+    ${currentUser.role === 'Pemohon' ? '<a href="#/buat-nota" class="btn btn-primary btn-sm">➕ Ajukan Nota Baru</a>' : ''}
+  </div>
+  <p class="text-muted" style="font-size:13px;margin:.25rem 0 1rem;">${kelola
+    ? 'Atur stok saat barang masuk, ada barang rusak/hilang, atau setelah hitung fisik. Stok gudang berkurang otomatis saat Berita Acara Serah Terima terbit. <b>Tersedia</b> = stok gudang dikurangi barang yang sedang dipesan di nota yang masih berjalan.'
+    : '<b>Tersedia</b> adalah jumlah yang masih bisa diminta saat ini. Barang yang sedang diminta di nota lain sudah dikurangkan, dan stok berkurang otomatis ketika barang diserahkan.'}</p>
+  <div class="stats-grid">
+    <div class="card stat-card"><div class="stat-icon" style="background:var(--pastel-blue);">🗃️</div><div><div class="stat-value">${jumlah.semua}</div><div class="stat-label">JENIS BARANG</div></div></div>
+    <div class="card stat-card"><div class="stat-icon" style="background:var(--pastel-green);">✅</div><div><div class="stat-value">${jumlah.tersedia}</div><div class="stat-label">TERSEDIA</div></div></div>
+    <div class="card stat-card"><div class="stat-icon" style="background:var(--status-danger-bg);">⛔</div><div><div class="stat-value">${jumlah.habis}</div><div class="stat-label">HABIS</div></div></div>
+    <div class="card stat-card"><div class="stat-icon" style="background:var(--pastel-amber);">❔</div><div><div class="stat-value">${jumlah.belum}</div><div class="stat-label">STOK BELUM DIATUR</div></div></div>
+  </div>
+  <div class="card" style="margin-bottom:1.5rem;">
+    <div class="flex-between" style="flex-wrap:wrap;gap:.6rem;margin-bottom:.75rem;">
+      <div class="chip-row" id="filterStok" style="margin:0;">${chip('semua', 'Semua')}${chip('tersedia', 'Tersedia')}${chip('habis', 'Habis')}${chip('belum', 'Belum diatur')}</div>
+      <input id="cariStok" placeholder="🔍 Cari nama barang…" value="${esc(cariStokAktif)}" style="max-width:260px;width:100%;padding:.5rem .7rem;border:1px solid #CBD5E1;border-radius:8px;font:inherit;font-size:13px;">
+    </div>
+    <div id="tabelStok"></div>
+  </div>
+  ${kelola ? `<div class="card"><h3 class="section-title" style="font-size:15px;margin-top:0;">🕘 Riwayat Perubahan Stok</h3>
+    <p class="text-muted" style="font-size:12px;margin:-.25rem 0 .75rem;">30 perubahan terbaru. Riwayat lengkap tersimpan di sheet <b>Log_Stok</b>.</p>
+    ${htmlTabelRiwayatStok(store.logStok.slice(-30).reverse(), true)}</div>` : ''}`;
+
+  const gambarTabel = () => {
+    const q = normTeks(cariStokAktif);
+    const list = daftar.filter(i => {
+      if (filterStokAktif === 'tersedia' && !(i.tersedia !== null && i.tersedia > 0)) return false;
+      if (filterStokAktif === 'habis' && i.tersedia !== 0) return false;
+      if (filterStokAktif === 'belum' && i.tersedia !== null) return false;
+      return !q || normTeks(i.barang.NamaBarang).includes(q);
+    });
+    const el = document.getElementById('tabelStok');
+    if (!list.length) { el.innerHTML = '<div class="empty-state">Tidak ada barang yang cocok.</div>'; return; }
+    const jsArg = (x) => esc(JSON.stringify(String(x)));
+
+    const angka = (i) => i.tersedia === null ? '<span class="text-muted">-</span>' : `<b class="angka-stok" style="font-size:15px;">${i.tersedia}</b>`;
+    el.innerHTML = kelola ? `<div class="table-wrap"><table class="data-table">
+      <thead><tr><th>Nama Barang</th><th>Satuan</th><th>Stok Gudang</th><th>Dipesan</th><th>Tersedia</th><th>Status</th><th></th></tr></thead>
+      <tbody>${list.map(i => `<tr class="baris-stok" data-nama="${esc(i.barang.NamaBarang)}">
+        <td><b>${esc(i.barang.NamaBarang)}</b></td>
+        <td>${esc(i.barang.Satuan)}</td>
+        <td>${i.stok === null ? '<span class="text-muted">-</span>' : i.stok}</td><td>${i.dipesan ? i.dipesan : '<span class="text-muted">0</span>'}</td>
+        <td class="sel-tersedia">${angka(i)}</td>
+        <td>${badgeStok(i)}</td>
+        <td style="white-space:nowrap;text-align:right;"><button type="button" class="btn btn-outline btn-sm" onclick="bukaAturStok(${jsArg(i.barang.NamaBarang)})">✏️ Atur Stok</button></td>
+      </tr>`).join('')}</tbody></table></div>`
+    : `<div class="table-wrap"><table class="data-table">
+      <thead><tr><th>Nama Barang</th><th style="text-align:right;">Tersedia</th></tr></thead>
+      <tbody>${list.map(i => `<tr class="baris-stok" data-nama="${esc(i.barang.NamaBarang)}">
+        <td><b>${esc(i.barang.NamaBarang)}</b></td>
+        <td class="sel-tersedia" style="text-align:right;white-space:nowrap;">${i.tersedia === null ? badgeStok(i)
+          : i.tersedia === 0 ? angka(i) + ' ' + badgeStok(i)
+          : angka(i) + ' <span class="text-muted">' + esc(i.barang.Satuan) + '</span>'}</td>
+      </tr>`).join('')}</tbody></table></div>`;
+  };
+  gambarTabel();
+
+  document.querySelectorAll('#filterStok .chip-filter').forEach(c => c.addEventListener('click', () => {
+    filterStokAktif = c.dataset.filter;
+    document.querySelectorAll('#filterStok .chip-filter').forEach(x => x.classList.toggle('active', x === c));
+    gambarTabel();
+  }));
+  const cari = document.getElementById('cariStok');
+  cari.addEventListener('input', () => { cariStokAktif = cari.value; gambarTabel(); });
+}
+
+window.bukaAturStok = function (namaBarang) {
+  if (!bolehAturStok()) return;
+  const info = petaStokBarang().get(normTeks(namaBarang));
+  if (!info) return showToast('Barang tidak ditemukan.', 'error');
+  const b = info.barang;
+  const satuan = esc(b.Satuan);
+  const belumDiatur = info.stok === null;
+  const riwayat = store.logStok.filter(l => normTeks(l.NamaBarang) === normTeks(b.NamaBarang)).slice(-5).reverse();
+  openModal(`
+    <h3 class="section-title" style="font-size:16px;margin-top:0;">✏️ Atur Stok — ${esc(b.NamaBarang)}</h3>
+    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:.5rem;margin-bottom:1rem;text-align:center;">
+      <div style="background:var(--surface-canvas);border-radius:8px;padding:.6rem;"><div class="text-muted" style="font-size:11px;font-weight:600;">STOK GUDANG</div><div style="font-size:18px;font-weight:700;">${belumDiatur ? '-' : info.stok}</div></div>
+      <div style="background:var(--surface-canvas);border-radius:8px;padding:.6rem;"><div class="text-muted" style="font-size:11px;font-weight:600;">SEDANG DIPESAN</div><div style="font-size:18px;font-weight:700;">${info.dipesan}</div></div>
+      <div style="background:var(--surface-canvas);border-radius:8px;padding:.6rem;"><div class="text-muted" style="font-size:11px;font-weight:600;">TERSEDIA</div><div style="font-size:18px;font-weight:700;">${belumDiatur ? '-' : info.tersedia}</div></div>
+    </div>
+    ${belumDiatur ? '<div class="info-banner info-warning" style="font-size:12.5px;">Stok barang ini belum diatur, sehingga permintaannya belum dibatasi. Isi jumlah yang ada di gudang saat ini.</div>' : ''}
+    <div class="field"><label>Jenis perubahan</label>
+      <select id="sMode">
+        <option value="tambah" ${belumDiatur ? '' : 'selected'}>Barang masuk (tambah stok)</option>
+        <option value="kurangi">Barang keluar di luar nota (rusak, hilang, kedaluwarsa)</option>
+        <option value="atur" ${belumDiatur ? 'selected' : ''}>Samakan dengan hitung fisik (atur jumlah)</option>
+      </select></div>
+    <div class="field"><label id="sLabelJumlah">Jumlah</label><input type="number" id="sJumlah" min="0" placeholder="0"></div>
+    <div class="field"><label>Keterangan <span id="sKetWajib" class="text-muted" style="font-weight:400;">(opsional)</span></label><input id="sKet" placeholder="mis. Pengadaan Oktober 2026"></div>
+    <div id="sPratinjau" class="info-banner info-success" style="display:none;font-size:13px;"></div>
+    <div id="sPeringatan" class="info-banner info-warning" style="display:none;font-size:12.5px;"></div>
+    <div style="display:flex;gap:.6rem;"><button class="btn btn-primary" id="sSimpanBtn">Simpan</button><button class="btn btn-outline" onclick="closeModal()">Batal</button></div>
+    <div style="margin-top:1.25rem;">
+      <div style="font-weight:600;font-size:13px;margin-bottom:.4rem;">Riwayat terakhir barang ini</div>
+      ${htmlTabelRiwayatStok(riwayat, false, true)}
+    </div>`);
+
+  const el = (id) => document.getElementById(id);
+  const dasar = belumDiatur ? 0 : info.stok;
+  const hitung = () => {
+    const mode = el('sMode').value;
+    const teks = el('sJumlah').value.trim();
+    const j = Number(teks);
+    el('sLabelJumlah').textContent = { tambah: 'Jumlah barang masuk', kurangi: 'Jumlah yang dikurangi', atur: 'Jumlah stok hasil hitung fisik' }[mode] + ' (' + b.Satuan + ')';
+    el('sKetWajib').textContent = mode === 'kurangi' ? '(wajib)' : '(opsional)';
+    el('sKet').placeholder = { tambah: 'mis. Pengadaan Oktober 2026', kurangi: 'mis. Rusak terkena air', atur: 'mis. Hasil stock opname semester II' }[mode];
+    if (teks === '' || !Number.isInteger(j) || j < 0) { el('sPratinjau').style.display = 'none'; el('sPeringatan').style.display = 'none'; return null; }
+    const sesudah = mode === 'tambah' ? dasar + j : mode === 'kurangi' ? dasar - j : j;
+    el('sPratinjau').style.display = 'block';
+    el('sPratinjau').innerHTML = sesudah < 0
+      ? `Pengurangan melebihi stok gudang (${dasar} ${satuan}).`
+      : `Stok gudang menjadi <b>${sesudah} ${satuan}</b>, tersedia untuk diminta <b>${Math.max(0, sesudah - info.dipesan)}</b>.`;
+    el('sPratinjau').className = 'info-banner ' + (sesudah < 0 ? 'info-danger' : 'info-success');
+    const kurangDariPesanan = sesudah >= 0 && sesudah < info.dipesan;
+    el('sPeringatan').style.display = kurangDariPesanan ? 'block' : 'none';
+    el('sPeringatan').innerHTML = kurangDariPesanan ? `Stok gudang akan lebih kecil dari jumlah yang sedang dipesan (${info.dipesan} ${satuan}). Nota yang sudah berjalan tetap diproses — sesuaikan jumlahnya saat pemeriksaan stok atau serah terima.` : '';
+    return { mode, jumlah: j, sesudah };
+  };
+  ['sMode', 'sJumlah'].forEach(id => el(id).addEventListener('input', hitung));
+  el('sMode').addEventListener('change', hitung);
+  hitung();
+  el('sJumlah').focus();
+
+  el('sSimpanBtn').addEventListener('click', () => {
+    const h = hitung();
+    const ket = el('sKet').value.trim();
+    if (!h) return showToast('Isi jumlah dengan bilangan bulat 0 atau lebih.', 'error');
+    if (h.mode !== 'atur' && h.jumlah < 1) return showToast('Jumlah minimal 1.', 'error');
+    if (h.sesudah < 0) return showToast('Pengurangan melebihi stok gudang (' + dasar + ' ' + b.Satuan + ').', 'error');
+    if (h.mode === 'kurangi' && !ket) return showToast('Isi keterangan pengurangan stok (mis. rusak, hilang).', 'error');
+    const jenis = h.mode === 'tambah' ? 'Barang Masuk' : h.mode === 'kurangi' ? 'Pengurangan' : (belumDiatur ? 'Stok Awal' : 'Penyesuaian (Hitung Fisik)');
+    aksiMaster(['barang', 'logStok'], 'updateStokBarang',
+      { email: currentUser.email, namaBarang: b.NamaBarang, mode: h.mode, jumlah: h.jumlah, keterangan: ket },
+      'Stok "' + b.NamaBarang + '" kini ' + h.sesudah + ' ' + b.Satuan + '.', (kunci) => {
+        const x = store.barang.find(o => normTeks(o.NamaBarang) === normTeks(b.NamaBarang));
+        if (x) x.Stok = h.sesudah;
+        riwayatStokLokal(kunci, {
+          NamaBarang: b.NamaBarang, Jenis: jenis, Perubahan: h.sesudah - dasar,
+          StokSebelum: belumDiatur ? '' : dasar, StokSesudah: h.sesudah, Keterangan: ket
+        });
+      });
   });
 };

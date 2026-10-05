@@ -17,13 +17,13 @@
 
 const KUNCI_DATA_LOKAL = 'sinomer_data_v1_';
 const KUNCI_DRAF_NOTA = 'sinomer_draf_nota_';
-const DAFTAR_TABEL = ['nota', 'items', 'log', 'barang', 'bidang', 'pegawai', 'panduan'];
+const DAFTAR_TABEL = ['nota', 'items', 'log', 'barang', 'bidang', 'pegawai', 'panduan', 'logStok'];
 const JEDA_CEK_BERKALA = 60000;   // cek data baru tiap 60 detik selama tab terbuka
 const JEDA_CEK_SAAT_PINDAH = 20000; // saat berpindah halaman, cek bila terakhir > 20 detik lalu
 
 const store = {
   versi: '',
-  nota: [], items: [], log: [], barang: [], bidang: [], pegawai: [], panduan: [],
+  nota: [], items: [], log: [], barang: [], bidang: [], pegawai: [], panduan: [], logStok: [],
   idx: { nota: new Map(), items: new Map(), log: new Map() },
   siap: false,             // data sudah tersedia (dari localStorage atau server)
   terakhirSinkron: 0,
@@ -325,6 +325,53 @@ function hitungLaporan() {
   return { totalNota: list.length, statusCount, barangTerbanyak, daftarNota: urutkanTerbaru(list, 'Tanggal') };
 }
 
+// ---------------- stok barang (aturan sama dengan server, MasterData.gs) ----------------
+// Stok     = jumlah di gudang (kosong = belum diatur, permintaan tidak dibatasi)
+// Dipesan  = jumlah pada nota yang masih berjalan (sebelum Selesai / Ditolak)
+// Tersedia = Stok - Dipesan  -> batas maksimal permintaan
+const STATUS_NOTA_BERJALAN = ['Diajukan', 'Diketahui', 'Stok Barang Sudah Diperiksa', 'Diproses'];
+const BATAS_RIWAYAT_STOK = 300;
+
+function nilaiStok(v) {
+  if (v === undefined || v === null || String(v).trim() === '') return null;
+  const n = Number(v);
+  return isFinite(n) ? Math.max(0, Math.floor(n)) : null;
+}
+
+// Map: nama barang (huruf kecil) -> jumlah dipesan di nota berjalan
+function hitungStokDipesan(kecualiNoNota) {
+  const hasil = new Map();
+  store.items.forEach(it => {
+    const no = String(it.NoNota);
+    if (kecualiNoNota && no === String(kecualiNoNota)) return;
+    const n = store.idx.nota.get(no);
+    if (!n || !STATUS_NOTA_BERJALAN.includes(n.Status)) return;
+    const sudahDiperiksa = String(it.StatusItem || '').trim() !== '';
+    const jumlah = Number(sudahDiperiksa ? it.JumlahDisetujui : it.JumlahDiminta) || 0;
+    const k = normTeks(it.NamaBarang);
+    hasil.set(k, (hasil.get(k) || 0) + jumlah);
+  });
+  return hasil;
+}
+
+// Map: nama barang (huruf kecil) -> { barang, stok (null = belum diatur), dipesan, tersedia }
+function petaStokBarang(kecualiNoNota) {
+  const dipesan = hitungStokDipesan(kecualiNoNota);
+  const peta = new Map();
+  store.barang.forEach(b => {
+    const k = normTeks(b.NamaBarang);
+    if (!k || peta.has(k)) return;
+    const stok = nilaiStok(b.Stok);
+    const d = dipesan.get(k) || 0;
+    peta.set(k, { barang: b, stok, dipesan: d, tersedia: stok === null ? null : Math.max(0, stok - d) });
+  });
+  return peta;
+}
+
+function riwayatStokLokal(kunci, entri) {
+  store.logStok.push(Object.assign({ Waktu: sekarangWib(), NoNota: '', Oleh: currentUser.nama, Keterangan: '', _lokal: kunci }, entri));
+}
+
 function pegawaiDenganEmail(email) {
   return store.pegawai.find(p => normTeks(p.Email) === normTeks(email)) || null;
 }
@@ -349,24 +396,31 @@ function notaSementara(noNota) { return String(noNota).indexOf('SEMENTARA-') ===
 // ---------------- aksi instan (optimistic UI) ----------------
 let _nomorAksi = 0;
 
-function ambilSnapshot(kunci, tabel) {
+// tambahan = tabel lain yang ikut diubah aksi pada satu nota (mis. stok barang saat serah terima)
+function ambilSnapshot(kunci, tabel, tambahan) {
   if (tabel) {
     const s = {};
     tabel.forEach(t => { s[t] = salinDalam(store[t]); });
     return { tabel: s };
   }
   const no = String(kunci);
-  return {
+  const snap = {
     nota: salinDalam(store.idx.nota.get(no)),
     items: salinDalam(store.idx.items.get(no) || []),
     log: salinDalam(store.idx.log.get(no) || [])
   };
+  if (tambahan && tambahan.length) {
+    snap.tambahan = {};
+    tambahan.forEach(t => { snap.tambahan[t] = salinDalam(store[t]); });
+  }
+  return snap;
 }
 
 function pulihkanSnapshot(kunci, snap) {
   if (snap.tabel) {
     Object.keys(snap.tabel).forEach(t => { store[t] = snap.tabel[t]; });
   } else {
+    if (snap.tambahan) Object.keys(snap.tambahan).forEach(t => { store[t] = snap.tambahan[t]; });
     const no = String(kunci);
     const sisaNota = store.nota.filter(n => String(n.NoNota) !== no);
     const idxAsli = store.nota.findIndex(n => String(n.NoNota) === no);
@@ -401,6 +455,10 @@ function terapkanPaket(res, kunciLokal) {
     }
     if (p.master) Object.keys(p.master).forEach(j => { if (Array.isArray(p.master[j])) store[j] = p.master[j]; });
     if (p.panduan) store.panduan = p.panduan;
+    if (Array.isArray(p.logStokBaru)) {
+      store.logStok = store.logStok.filter(l => !(kunciLokal && l._lokal === String(kunciLokal))).concat(p.logStokBaru);
+      if (store.logStok.length > BATAS_RIWAYAT_STOK) store.logStok = store.logStok.slice(-BATAS_RIWAYAT_STOK);
+    }
   }
   store.generasi++;
   bangunIndeks();
@@ -444,12 +502,12 @@ function selesaiPending() {
 //   ubahLokal()  -> ubah data di browser (langsung tampil)
 //   aksi/data    -> dikirim ke server di latar belakang
 //   bila server menolak, data dikembalikan seperti semula
-// opsi = { kunci, tabel, aksi, data, ubahLokal, pesan, sesudahBerhasil, sesudahGagal, pindahKe }
+// opsi = { kunci, tabel, tambahan, aksi, data, ubahLokal(kunci), pesan, sesudahBerhasil, sesudahGagal, pindahKe }
 function kirimInstan(opsi) {
   const kunci = String(opsi.kunci || ('aksi-' + (++_nomorAksi)));
-  const snap = ambilSnapshot(kunci, opsi.tabel);
+  const snap = ambilSnapshot(kunci, opsi.tabel, opsi.tambahan);
   try {
-    opsi.ubahLokal();
+    opsi.ubahLokal(kunci);
   } catch (err) {
     pulihkanSnapshot(kunci, snap);
     showToast('Terjadi kesalahan tampilan: ' + err.message, 'error');
