@@ -807,9 +807,11 @@ function renderDetail(content, noNota) {
           <div class="text-muted" style="font-size:11px;">${n.TglDiketahui ? fmtTgl(n.TglDiketahui) : ''}</div></div>
         <div class="auth-box"><div class="text-muted" style="font-size:11px;font-weight:600;">Menyetujui,</div>
           <div style="font-weight:600;">Sekretaris Dinas Perhubungan Provinsi Riau</div>
-          <div class="qr-placeholder">${n.AtasanMenyetujuiNama ? qr(n.QRKananKode, 'Belum disetujui') : 'Belum disetujui'}</div>
+          ${n.DitolakOleh === 'Sekretaris' ? `<div class="qr-placeholder" style="color:var(--status-danger-text);font-weight:600;">Ditolak</div>
+          <div style="font-size:12.5px;">${esc(n.PenolakNama || '-')}</div>
+          <div class="text-muted" style="font-size:11px;">${n.TglDitolak ? fmtTgl(n.TglDitolak) : ''}</div></div>` : `<div class="qr-placeholder">${n.AtasanMenyetujuiNama ? qr(n.QRKananKode, 'Belum disetujui') : 'Belum disetujui'}</div>
           <div style="font-size:12.5px;">${n.AtasanMenyetujuiNama || '-'}</div>
-          <div class="text-muted" style="font-size:11px;">${n.TglDisetujui ? fmtTgl(n.TglDisetujui) : ''}</div></div>
+          <div class="text-muted" style="font-size:11px;">${n.TglDisetujui ? fmtTgl(n.TglDisetujui) : ''}</div></div>`}
       </div>
 
       ${adaBast ? `
@@ -864,6 +866,9 @@ function jumlahDiserahkan(it) {
 function renderBannerStatus(n, items) {
   if (n.Status === 'Ditolak' && n.AlasanPembatalan) {
     return `<div class="info-banner info-danger">❌ <b>Serah terima dibatalkan</b> karena stok tidak tersedia saat pengambilan. Alasan: ${esc(n.AlasanPembatalan)}. Silakan ajukan nota baru bila masih diperlukan.</div>`;
+  }
+  if (n.Status === 'Ditolak' && n.DitolakOleh === 'Sekretaris') {
+    return `<div class="info-banner info-danger">❌ <b>Nota ditolak Sekretaris</b>${n.PenolakNama ? ' (' + esc(n.PenolakNama) + (n.TglDitolak ? ', ' + fmtTgl(n.TglDitolak) : '') + ')' : ''}. Alasan: ${esc(String(n.AlasanPenolakan || '-').trim().replace(/[.\s]+$/, ''))}. Silakan ajukan nota baru bila masih diperlukan.</div>`;
   }
   if (n.Status === 'Ditolak') {
     const alasan = n.PemeriksaNama
@@ -940,8 +945,11 @@ function renderAksiRole(n, items, res) {
     return `<div class="card" style="margin-bottom:1rem;">
       <h3 class="section-title" style="font-size:14px;">Tindakan: Setujui Hasil Pemeriksaan Stok</h3>
       <p style="font-size:13px;margin:0 0 .75rem;">Stok telah diperiksa oleh <b>${n.PemeriksaNama || 'Bagian Perlengkapan'}</b> dengan hasil <b>${n.HasilPersetujuan || '-'}</b>. Rincian keputusan tiap barang ada di tabel Daftar Barang di atas.</p>
-      <div class="field"><label>Catatan (opsional)</label><textarea id="catatanMenyetujui"></textarea></div>
-      <button class="btn btn-success" id="btnSetujuiSekretaris">✅ Setujui & Terbitkan QR</button>
+      <div class="field"><label>Catatan (wajib diisi bila menolak)</label><textarea id="catatanMenyetujui" placeholder="mis. Permintaan belum sesuai prioritas anggaran bulan ini."></textarea></div>
+      <div style="display:flex;gap:.6rem;flex-wrap:wrap;">
+        <button class="btn btn-success" id="btnSetujuiSekretaris">✅ Setujui & Terbitkan QR</button>
+        <button class="btn btn-danger" id="btnTolakSekretaris">❌ Tolak</button>
+      </div>
     </div>`;
   }
 
@@ -1106,7 +1114,7 @@ function attachDetailActionHandlers(n, items, res) {
   document.getElementById('btnSetujuiSekretaris')?.addEventListener('click', () => {
     if (!confirm('Setujui nota ini? QR tanda tangan kanan akan terbit dan pemohon diberi tahu untuk mengambil barang.')) return;
     const catatan = nilai('catatanMenyetujui');
-    aksiNotaInstan(n, 'approveMenyetujui', { noNota: n.NoNota, atasanEmail: currentUser.email, catatan },
+    aksiNotaInstan(n, 'approveMenyetujui', { noNota: n.NoNota, atasanEmail: currentUser.email, disetujui: true, catatan },
       'Nota disetujui. QR tanda tangan kanan terbit dan pemohon diberi tahu untuk mengambil barang.', () => {
         const waktu = sekarangWib();
         Object.assign(n, {
@@ -1114,6 +1122,23 @@ function attachDetailActionHandlers(n, items, res) {
           TglDisetujui: waktu, TglDiproses: waktu, CatatanDisetujui: catatan, QRKananKode: ''
         });
         logLokal(n.NoNota, 'Setujui (Menyetujui)', 'Menyetujui hasil pemeriksaan stok: ' + (n.HasilPersetujuan || 'Disetujui') + '.');
+      });
+  });
+  document.getElementById('btnTolakSekretaris')?.addEventListener('click', () => {
+    const catatan = nilai('catatanMenyetujui');
+    if (!catatan) {
+      showToast('Tuliskan alasan penolakan pada kolom Catatan terlebih dahulu.', 'error');
+      document.getElementById('catatanMenyetujui')?.focus();
+      return;
+    }
+    if (!confirm('Tolak nota ini?\n\nNota akan berstatus Ditolak, pemohon dan Bagian Perlengkapan diberi tahu. Tindakan ini tidak dapat dibatalkan.')) return;
+    aksiNotaInstan(n, 'approveMenyetujui', { noNota: n.NoNota, atasanEmail: currentUser.email, disetujui: false, catatan },
+      'Nota ditolak. Pemohon dan Bagian Perlengkapan telah diberi tahu.', () => {
+        Object.assign(n, {
+          Status: 'Ditolak', DitolakOleh: 'Sekretaris', PenolakNama: currentUser.nama,
+          TglDitolak: sekarangWib(), AlasanPenolakan: catatan
+        });
+        logLokal(n.NoNota, 'Tolak (Menyetujui)', catatan);
       });
   });
 
