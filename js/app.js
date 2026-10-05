@@ -532,7 +532,7 @@ function renderBuatNota(content, editNoNota) {
     const info = infoStokNama(b.NamaBarang);
     const nama = esc(b.NamaBarang);
     if (info && info.tersedia === 0) return `<option value="${nama}" data-satuan="${esc(b.Satuan)}" disabled>${nama} — HABIS</option>`;
-    const ket = info && info.tersedia !== null ? ` — stok ${info.tersedia} ${esc(b.Satuan)}` : '';
+    const ket = info && info.tersedia !== null ? ` — stok ${info.tersedia}` : '';
     return `<option value="${nama}" data-satuan="${esc(b.Satuan)}">${nama}${ket}</option>`;
   }
 
@@ -551,7 +551,6 @@ function renderBuatNota(content, editNoNota) {
       const info = infoStokNama(namaBarangBaris(row));
       if (!info) { infoEl.innerHTML = ''; infoEl.style.display = 'none'; jumlahEl.removeAttribute('max'); return; }
       infoEl.style.display = 'block';
-      const satuan = esc(info.barang.Satuan);
       if (info.tersedia === null) {
         infoEl.innerHTML = '<span class="text-muted">Stok barang ini belum diatur Bagian Perlengkapan.</span>';
         jumlahEl.removeAttribute('max');
@@ -567,14 +566,14 @@ function renderBuatNota(content, editNoNota) {
         return;
       }
       if (maks === 0) {
-        infoEl.innerHTML = `<span class="text-danger" style="font-weight:600;">✖ Seluruh stok (${info.tersedia} ${satuan}) sudah diminta di baris lain.</span> <span class="text-muted">Hapus baris ini atau gabungkan jumlahnya.</span>`;
+        infoEl.innerHTML = `<span class="text-danger" style="font-weight:600;">✖ Seluruh stok (${info.tersedia}) sudah diminta di baris lain.</span> <span class="text-muted">Hapus baris ini atau gabungkan jumlahnya.</span>`;
         jumlahEl.removeAttribute('max');
         return;
       }
       jumlahEl.max = maks;
       let disesuaikan = false;
       if (row === barisDiubah && Number(jumlahEl.value) > maks) { jumlahEl.value = maks; disesuaikan = true; }
-      infoEl.innerHTML = `<span style="color:var(--status-selesai-text);font-weight:600;">✔ Stok tersedia: ${info.tersedia} ${satuan}</span>`
+      infoEl.innerHTML = `<span style="color:var(--status-selesai-text);font-weight:600;">✔ Stok tersedia: ${info.tersedia}</span>`
         + (dipakaiLain ? ` <span class="text-muted">(${dipakaiLain} sudah diminta di baris lain, sisa ${maks})</span>` : '')
         + (disesuaikan ? ` <span style="color:var(--status-diproses-text);font-weight:600;">— jumlah disesuaikan menjadi maksimal ${maks}</span>` : '')
         + (!disesuaikan && Number(jumlahEl.value) > maks ? ` <span class="text-danger" style="font-weight:600;">— maksimal ${maks}</span>` : '');
@@ -691,7 +690,7 @@ function renderBuatNota(content, editNoNota) {
     });
     if (!kirimUlangDraf) for (const { info, jumlah } of totalPerBarang.values()) {
       if (info.tersedia === 0) return showToast('Stok "' + info.barang.NamaBarang + '" sedang habis. Hapus barang ini dari daftar atau pilih barang lain.', 'error', 6000);
-      if (jumlah > info.tersedia) return showToast('Stok "' + info.barang.NamaBarang + '" tidak mencukupi: tersedia ' + info.tersedia + ' ' + info.barang.Satuan + ', diminta ' + jumlah + '.', 'error', 6000);
+      if (jumlah > info.tersedia) return showToast('Stok "' + info.barang.NamaBarang + '" tidak mencukupi: tersedia ' + info.tersedia + ', diminta ' + jumlah + '.', 'error', 6000);
     }
 
     const itemLokal = (no) => items.map((it, k) => ({
@@ -1752,7 +1751,7 @@ function renderDataMaster(content) {
       if (ganti && store.barang.some(o => normTeks(o.NamaBarang) === normTeks(d.namaBarang))) return showToast('Nama barang "' + d.namaBarang.trim() + '" sudah dipakai barang lain.', 'error');
       const infoAsli = petaStokBarang().get(normTeks(d.originalNama));
       if (ganti && infoAsli && infoAsli.stok !== null && infoAsli.dipesan > 0) {
-        return showToast('Nama "' + d.originalNama + '" belum bisa diganti karena masih diminta di nota yang sedang berjalan (' + infoAsli.dipesan + ' ' + (infoAsli.barang.Satuan || '') + '). Ganti nama setelah nota tersebut selesai atau ditolak.', 'error', 7000);
+        return showToast('Nama "' + d.originalNama + '" belum bisa diganti karena masih diminta di nota yang sedang berjalan (' + infoAsli.dipesan + '). Ganti nama setelah nota tersebut selesai atau ditolak.', 'error', 7000);
       }
       aksiMaster('barang', 'updateMasterBarang', d, 'Barang berhasil diperbarui.', () => {
         const x = store.barang.find(o => o.NamaBarang === d.originalNama);
@@ -1896,7 +1895,7 @@ function htmlStokUntukPemeriksaan(info, diminta) {
   if (!info) return '';
   if (info.stok === null) return '<div class="text-muted" style="font-size:12px;margin:.25rem 0 .5rem;">📦 Stok barang ini belum diatur.</div>';
   const kurang = diminta > info.tersedia;
-  return `<div style="font-size:12px;margin:.25rem 0 .5rem;color:${kurang ? 'var(--status-danger-text)' : 'var(--text-secondary)'};">📦 Stok gudang: <b>${info.stok}</b> ${esc(info.barang.Satuan)}`
+  return `<div style="font-size:12px;margin:.25rem 0 .5rem;color:${kurang ? 'var(--status-danger-text)' : 'var(--text-secondary)'};">📦 Stok gudang: <b>${info.stok}</b>`
     + (info.dipesan ? ` · dipesan nota lain: ${info.dipesan}` : '')
     + ` · tersedia untuk nota ini: <b>${info.tersedia}</b>${kurang ? ' — kurang dari yang diminta' : ''}</div>`;
 }
@@ -1919,7 +1918,7 @@ function kurangiStokLokal(kunci, noNota, daftar) {
     b.Stok = sesudah;
     riwayatStokLokal(kunci, {
       NamaBarang: b.NamaBarang, Jenis: 'Serah Terima', Perubahan: sesudah - sebelum, StokSebelum: sebelum, StokSesudah: sesudah,
-      NoNota: noNota, Keterangan: 'Diserahkan ' + diserahkan + ' ' + (b.Satuan || '') + '.'
+      NoNota: noNota, Keterangan: 'Diserahkan ' + diserahkan + '.'
     });
   });
 }
@@ -2005,10 +2004,9 @@ function renderStokBarang(content) {
 
     const angka = (i) => i.tersedia === null ? '<span class="text-muted">-</span>' : `<b class="angka-stok" style="font-size:15px;">${i.tersedia}</b>`;
     el.innerHTML = kelola ? `<div class="table-wrap"><table class="data-table">
-      <thead><tr><th>Nama Barang</th><th>Satuan</th><th>Stok Gudang</th><th>Dipesan</th><th>Tersedia</th><th>Status</th><th></th></tr></thead>
+      <thead><tr><th>Nama Barang</th><th>Stok Gudang</th><th>Dipesan</th><th>Tersedia</th><th>Status</th><th></th></tr></thead>
       <tbody>${list.map(i => `<tr class="baris-stok" data-nama="${esc(i.barang.NamaBarang)}">
         <td><b>${esc(i.barang.NamaBarang)}</b></td>
-        <td>${esc(i.barang.Satuan)}</td>
         <td>${i.stok === null ? '<span class="text-muted">-</span>' : i.stok}</td><td>${i.dipesan ? i.dipesan : '<span class="text-muted">0</span>'}</td>
         <td class="sel-tersedia">${angka(i)}</td>
         <td>${badgeStok(i)}</td>
@@ -2020,7 +2018,7 @@ function renderStokBarang(content) {
         <td><b>${esc(i.barang.NamaBarang)}</b></td>
         <td class="sel-tersedia" style="text-align:right;white-space:nowrap;">${i.tersedia === null ? badgeStok(i)
           : i.tersedia === 0 ? angka(i) + ' ' + badgeStok(i)
-          : angka(i) + ' <span class="text-muted">' + esc(i.barang.Satuan) + '</span>'}</td>
+          : angka(i)}</td>
       </tr>`).join('')}</tbody></table></div>`;
   };
   gambarTabel();
@@ -2039,7 +2037,6 @@ window.bukaAturStok = function (namaBarang) {
   const info = petaStokBarang().get(normTeks(namaBarang));
   if (!info) return showToast('Barang tidak ditemukan.', 'error');
   const b = info.barang;
-  const satuan = esc(b.Satuan);
   const belumDiatur = info.stok === null;
   const riwayat = store.logStok.filter(l => normTeks(l.NamaBarang) === normTeks(b.NamaBarang)).slice(-5).reverse();
   openModal(`
@@ -2072,19 +2069,19 @@ window.bukaAturStok = function (namaBarang) {
     const mode = el('sMode').value;
     const teks = el('sJumlah').value.trim();
     const j = Number(teks);
-    el('sLabelJumlah').textContent = { tambah: 'Jumlah barang masuk', kurangi: 'Jumlah yang dikurangi', atur: 'Jumlah stok hasil hitung fisik' }[mode] + ' (' + b.Satuan + ')';
+    el('sLabelJumlah').textContent = { tambah: 'Jumlah barang masuk', kurangi: 'Jumlah yang dikurangi', atur: 'Jumlah stok hasil hitung fisik' }[mode];
     el('sKetWajib').textContent = mode === 'kurangi' ? '(wajib)' : '(opsional)';
     el('sKet').placeholder = { tambah: 'mis. Pengadaan Oktober 2026', kurangi: 'mis. Rusak terkena air', atur: 'mis. Hasil stock opname semester II' }[mode];
     if (teks === '' || !Number.isInteger(j) || j < 0) { el('sPratinjau').style.display = 'none'; el('sPeringatan').style.display = 'none'; return null; }
     const sesudah = mode === 'tambah' ? dasar + j : mode === 'kurangi' ? dasar - j : j;
     el('sPratinjau').style.display = 'block';
     el('sPratinjau').innerHTML = sesudah < 0
-      ? `Pengurangan melebihi stok gudang (${dasar} ${satuan}).`
-      : `Stok gudang menjadi <b>${sesudah} ${satuan}</b>, tersedia untuk diminta <b>${Math.max(0, sesudah - info.dipesan)}</b>.`;
+      ? `Pengurangan melebihi stok gudang (${dasar}).`
+      : `Stok gudang menjadi <b>${sesudah}</b>, tersedia untuk diminta <b>${Math.max(0, sesudah - info.dipesan)}</b>.`;
     el('sPratinjau').className = 'info-banner ' + (sesudah < 0 ? 'info-danger' : 'info-success');
     const kurangDariPesanan = sesudah >= 0 && sesudah < info.dipesan;
     el('sPeringatan').style.display = kurangDariPesanan ? 'block' : 'none';
-    el('sPeringatan').innerHTML = kurangDariPesanan ? `Stok gudang akan lebih kecil dari jumlah yang sedang dipesan (${info.dipesan} ${satuan}). Nota yang sudah berjalan tetap diproses — sesuaikan jumlahnya saat pemeriksaan stok atau serah terima.` : '';
+    el('sPeringatan').innerHTML = kurangDariPesanan ? `Stok gudang akan lebih kecil dari jumlah yang sedang dipesan (${info.dipesan}). Nota yang sudah berjalan tetap diproses — sesuaikan jumlahnya saat pemeriksaan stok atau serah terima.` : '';
     return { mode, jumlah: j, sesudah };
   };
   ['sMode', 'sJumlah'].forEach(id => el(id).addEventListener('input', hitung));
@@ -2097,12 +2094,12 @@ window.bukaAturStok = function (namaBarang) {
     const ket = el('sKet').value.trim();
     if (!h) return showToast('Isi jumlah dengan bilangan bulat 0 atau lebih.', 'error');
     if (h.mode !== 'atur' && h.jumlah < 1) return showToast('Jumlah minimal 1.', 'error');
-    if (h.sesudah < 0) return showToast('Pengurangan melebihi stok gudang (' + dasar + ' ' + b.Satuan + ').', 'error');
+    if (h.sesudah < 0) return showToast('Pengurangan melebihi stok gudang (' + dasar + ').', 'error');
     if (h.mode === 'kurangi' && !ket) return showToast('Isi keterangan pengurangan stok (mis. rusak, hilang).', 'error');
     const jenis = h.mode === 'tambah' ? 'Barang Masuk' : h.mode === 'kurangi' ? 'Pengurangan' : (belumDiatur ? 'Stok Awal' : 'Penyesuaian (Hitung Fisik)');
     aksiMaster(['barang', 'logStok'], 'updateStokBarang',
       { email: currentUser.email, namaBarang: b.NamaBarang, mode: h.mode, jumlah: h.jumlah, keterangan: ket },
-      'Stok "' + b.NamaBarang + '" kini ' + h.sesudah + ' ' + b.Satuan + '.', (kunci) => {
+      'Stok "' + b.NamaBarang + '" kini ' + h.sesudah + '.', (kunci) => {
         const x = store.barang.find(o => normTeks(o.NamaBarang) === normTeks(b.NamaBarang));
         if (x) x.Stok = h.sesudah;
         riwayatStokLokal(kunci, {
