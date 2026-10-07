@@ -95,6 +95,7 @@ function muatDataLokal() {
     if (!d || !d.data) return false;
     DAFTAR_TABEL.forEach(t => { store[t] = dariRingkas(d.data[t]); });
     store.versi = d.versi || '';
+    if (d.versiPdf) store.versiPdf = d.versiPdf;
     bangunIndeks();
     store.siap = true;
     return true;
@@ -112,13 +113,14 @@ function simpanDataLokal() {
     try {
       const data = {};
       DAFTAR_TABEL.forEach(t => { data[t] = keRingkas(store[t]); });
-      localStorage.setItem(kunciDataLokal(), JSON.stringify({ versi: store.versi, disimpan: Date.now(), data }));
+      localStorage.setItem(kunciDataLokal(), JSON.stringify({ versi: store.versi, versiPdf: store.versiPdf || '', disimpan: Date.now(), data }));
     } catch (err) { /* penyimpanan penuh / tidak tersedia: aplikasi tetap jalan dari memori */ }
   }, 400);
 }
 
 function hapusDataLokal(email) {
   try { localStorage.removeItem(KUNCI_DATA_LOKAL + normTeks(email)); } catch (err) { /* abaikan */ }
+  if (typeof hapusPdfTersimpan === 'function') hapusPdfTersimpan();
 }
 
 function kosongkanStore() {
@@ -134,6 +136,7 @@ function kosongkanStore() {
 
 function terapkanDataServer(versi, data) {
   DAFTAR_TABEL.forEach(t => { if (data[t]) store[t] = dariRingkas(data[t]); });
+  if (data.meta && data.meta.versiPdf) store.versiPdf = String(data.meta.versiPdf);
   store.versi = versi || '';
   store.siap = true;
   store.galatAwal = '';
@@ -167,7 +170,10 @@ function sinkronkan(opsi) {
   if (store.pending.size) { store.perluSinkron = true; return Promise.resolve(); }
   if (_janjiSinkron) return _janjiSinkron;
   store.sedangSinkron = true;
+  store.sinkronLama = false;
   aturIndikatorSinkron();
+  // "Memperbarui…" baru tampil bila pemeriksaan lebih dari 1 detik (pemeriksaan cepat tidak berkedip)
+  const timerIndikator = setTimeout(() => { store.sinkronLama = true; aturIndikatorSinkron(); }, 1000);
   const generasiAwal = store.generasi;
   const emailAwal = normTeks(currentUser.email);
   _janjiSinkron = (async () => {
@@ -190,6 +196,7 @@ function sinkronkan(opsi) {
         } else {
           terapkanDataServer(res.versi, res.data);
           renderUlangAman();
+          if (typeof jadwalkanPdfAntrean === 'function') jadwalkanPdfAntrean();
         }
       }
       if (opsi.umumkan) showToast('Data sudah yang terbaru.');
@@ -202,7 +209,9 @@ function sinkronkan(opsi) {
         showToast('Gagal memuat data terbaru: ' + err.message, 'error', 6000);
       }
     } finally {
+      clearTimeout(timerIndikator);
       store.sedangSinkron = false;
+      store.sinkronLama = false;
       _janjiSinkron = null;
       aturIndikatorSinkron();
     }
@@ -236,8 +245,9 @@ function aturIndikatorSinkron() {
   const el = typeof document !== 'undefined' && document.getElementById('syncPill');
   if (!el) return;
   let kelas, teks, judul;
+  const sinkronLama = store.sedangSinkron && store.sinkronLama;
   if (store.pending.size) { kelas = 'sync-simpan'; teks = '⏳ Menyimpan…'; judul = 'Perubahan sedang dikirim ke server'; }
-  else if (store.sedangSinkron) { kelas = 'sync-jalan'; teks = '⟳ Memperbarui…'; judul = 'Memeriksa data terbaru'; }
+  else if (sinkronLama) { kelas = 'sync-jalan'; teks = '⟳ Memperbarui…'; judul = 'Memeriksa data terbaru'; }
   else if (store.offline) { kelas = 'sync-offline'; teks = '⚠ Offline'; judul = 'Tidak terhubung ke server. Klik untuk mencoba lagi.'; }
   else { kelas = 'sync-ok'; teks = '✓ Tersinkron'; judul = 'Data sudah terbaru. Klik untuk memuat ulang dari server.'; }
   el.className = 'sync-pill ' + kelas;
@@ -560,19 +570,163 @@ function hapusDrafNota() {
   try { localStorage.removeItem(KUNCI_DRAF_NOTA + normTeks(currentUser.email)); } catch (err) { /* abaikan */ }
 }
 
-// ---------------- PDF (disimpan di memori per isi nota) ----------------
-const cachePdfNota = new Map();
-async function ambilPdfNota(noNota) {
+// ---------------- PDF: disiapkan lebih awal & disimpan di browser ----------------
+// - Saat detail nota dibuka, PDF disiapkan di latar belakang (siapkanPdfLatar),
+//   jadi ketika tombol "Lihat PDF" / "Unduh PDF" diklik biasanya sudah siap.
+// - PDF disimpan di memori + IndexedDB browser per isi nota ("tanda"), sehingga
+//   membuka PDF yang sama lagi - bahkan setelah halaman dimuat ulang - langsung tampil.
+//   Bila isi nota berubah (mis. sudah diparaf), tandanya berubah dan PDF dibuat ulang.
+// - Permintaan yang sedang berjalan dipakai bersama (tidak dobel ke server).
+const cachePdfNota = new Map();   // noNota -> { tanda, base64, filename }
+const pdfSedangDibuat = new Map(); // noNota -> { tanda, janji, latar }
+const NAMA_DB_PDF = 'sinomer_pdf';
+const BATAS_PDF_TERSIMPAN = 60;
+const UMUR_PDF_TERSIMPAN = 14 * 24 * 3600 * 1000; // PDF tersimpan dipakai paling lama 14 hari
+// Versi tata letak PDF. Nilai sebenarnya dikirim server (data awal & jawaban PDF);
+// ini hanya cadangan bila server belum mengirimnya.
+const VERSI_PDF_BROWSER = 'pdf-v6';
+let _janjiDbPdf = null;
+
+// Dua tempat: 'pdf' (isi berkas) dan 'meta' (waktu simpan saja, kecil) - untuk membuang yang terlama
+function bukaDbPdf() {
+  if (_janjiDbPdf) return _janjiDbPdf;
+  _janjiDbPdf = new Promise(resolve => {
+    try {
+      if (typeof indexedDB === 'undefined' || !indexedDB) return resolve(null);
+      const req = indexedDB.open(NAMA_DB_PDF, 2);
+      req.onupgradeneeded = () => {
+        const db = req.result;
+        if (!db.objectStoreNames.contains('pdf')) db.createObjectStore('pdf');
+        if (!db.objectStoreNames.contains('meta')) db.createObjectStore('meta');
+      };
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => resolve(null);
+      req.onblocked = () => resolve(null);
+    } catch (err) { resolve(null); }
+  });
+  return _janjiDbPdf;
+}
+
+function kunciDbPdf(email, noNota) { return normTeks(email) + '|' + String(noNota); }
+
+async function dbPdfAmbil(email, noNota) {
+  const db = await bukaDbPdf();
+  if (!db) return null;
+  return new Promise(resolve => {
+    try {
+      const req = db.transaction('pdf', 'readonly').objectStore('pdf').get(kunciDbPdf(email, noNota));
+      req.onsuccess = () => resolve(req.result || null);
+      req.onerror = () => resolve(null);
+    } catch (err) { resolve(null); }
+  });
+}
+
+async function dbPdfSimpan(email, noNota, data) {
+  const db = await bukaDbPdf();
+  if (!db) return;
+  try {
+    const tx = db.transaction(['pdf', 'meta'], 'readwrite');
+    const pdf = tx.objectStore('pdf'), meta = tx.objectStore('meta');
+    const kunci = kunciDbPdf(email, noNota);
+    const waktu = Date.now();
+    pdf.put(Object.assign({ waktu }, data), kunci);
+    meta.put(waktu, kunci);
+    // simpan paling banyak BATAS_PDF_TERSIMPAN berkas; yang terlama dibuang (hanya membaca data kecil di 'meta')
+    const semuaKunci = meta.getAllKeys(), semuaWaktu = meta.getAll();
+    semuaWaktu.onsuccess = () => {
+      const jumlah = semuaWaktu.result.length;
+      if (jumlah <= BATAS_PDF_TERSIMPAN) return;
+      semuaWaktu.result.map((w, i) => [w, semuaKunci.result[i]]).sort((a, b) => a[0] - b[0])
+        .slice(0, jumlah - BATAS_PDF_TERSIMPAN).forEach(([, k]) => { pdf.delete(k); meta.delete(k); });
+    };
+  } catch (err) { /* penyimpanan penuh / tidak tersedia: tetap jalan dari memori */ }
+}
+
+// Hapus semua PDF tersimpan (dipanggil saat keluar sistem - aman untuk komputer bersama)
+function hapusPdfTersimpan() {
+  cachePdfNota.clear();
+  pdfSedangDibuat.clear();
+  bukaDbPdf().then(db => {
+    if (!db) return;
+    try {
+      const tx = db.transaction(['pdf', 'meta'], 'readwrite');
+      tx.objectStore('pdf').clear();
+      tx.objectStore('meta').clear();
+    } catch (err) { /* abaikan */ }
+  });
+}
+
+function tandaPdfNota(noNota) {
   const no = String(noNota);
-  const tanda = JSON.stringify([store.idx.nota.get(no), store.idx.items.get(no)]);
-  const ada = cachePdfNota.get(no);
-  if (ada && ada.tanda === tanda) return ada;
-  const pdf = await apiGet('getPdf', { noNota: no }, { diam: true, timeout: 120000 });
-  const hasil = { tanda, base64: pdf.base64, filename: pdf.filename };
-  if (!pdf.sementara) cachePdfNota.set(no, hasil); // QR gagal dimuat: jangan disimpan, coba lagi lain kali
-  return hasil;
+  const bersih = (o) => { const x = {}; Object.keys(o || {}).sort().forEach(k => { if (k[0] !== '_') x[k] = o[k]; }); return x; };
+  const items = (store.idx.items.get(no) || []).map(bersih).sort((a, b) => String(a.ID).localeCompare(String(b.ID)));
+  return (store.versiPdf || VERSI_PDF_BROWSER) + JSON.stringify([bersih(store.idx.nota.get(no)), items]);
+}
+
+// PDF yang sudah siap untuk isi nota saat ini (tanpa menunggu), atau null
+function pdfSiapSekarang(noNota) {
+  const ada = cachePdfNota.get(String(noNota));
+  return ada && ada.tanda === tandaPdfNota(noNota) ? ada : null;
+}
+
+// opsi.latar = true: disiapkan sebelum diklik. Server boleh menjawab "belum ada"
+// (mis. batas harian pembuatan PDF latar tercapai); saat diklik, PDF tetap dibuat.
+function ambilPdfNota(noNota, opsi) {
+  opsi = opsi || {};
+  const no = String(noNota);
+  const latar = !!opsi.latar;
+  const tanda = tandaPdfNota(no);
+  const siap = cachePdfNota.get(no);
+  if (siap && siap.tanda === tanda) return Promise.resolve(siap);
+  const jalan = pdfSedangDibuat.get(no);
+  if (jalan && jalan.tanda === tanda) {
+    // klik pengguna saat persiapan latar masih berjalan: pakai hasilnya, atau buat sendiri bila server belum membuatnya
+    if (jalan.latar && !latar) return jalan.janji.catch(err => { if (err && err.belumAda) return ambilPdfNota(no); throw err; });
+    return jalan.janji;
+  }
+
+  const pemilik = normTeks(currentUser && currentUser.email);
+  const masihPemilik = () => !!currentUser && normTeks(currentUser.email) === pemilik;
+  const janji = (async () => {
+    const tersimpan = await dbPdfAmbil(pemilik, no);
+    if (tersimpan && tersimpan.tanda === tanda && tersimpan.base64 && Date.now() - (tersimpan.waktu || 0) < UMUR_PDF_TERSIMPAN) {
+      if (!masihPemilik()) throw new Error('Sesi sudah berakhir.');
+      const hasil = { tanda, base64: tersimpan.base64, filename: tersimpan.filename };
+      cachePdfNota.set(no, hasil);
+      return hasil;
+    }
+    const params = { noNota: no };
+    if (latar) params.latar = '1';
+    const pdf = await apiGet('getPdf', params, { diam: true, timeout: 120000 });
+    if (!masihPemilik()) throw new Error('Sesi sudah berakhir.');
+    if (pdf.belumAda) { const e = new Error('PDF belum dibuat.'); e.belumAda = true; throw e; }
+    if (pdf.versiPdf && pdf.versiPdf !== (store.versiPdf || VERSI_PDF_BROWSER)) {
+      store.versiPdf = pdf.versiPdf; // tata letak PDF di server sudah diperbarui
+    }
+    const tandaKini = tandaPdfNota(no);
+    const hasil = { tanda: tandaKini, base64: pdf.base64, filename: pdf.filename };
+    // QR gagal dimuat (layanan QR gangguan) atau isi nota berubah selama menunggu: jangan disimpan
+    const isiSama = tandaKini.slice(tandaKini.indexOf('[')) === tanda.slice(tanda.indexOf('['));
+    if (!pdf.sementara && store.idx.nota.get(no) && isiSama) {
+      cachePdfNota.set(no, hasil);
+      dbPdfSimpan(pemilik, no, hasil);
+    }
+    return hasil;
+  })();
+  pdfSedangDibuat.set(no, { tanda, janji, latar });
+  const selesai = () => { const j = pdfSedangDibuat.get(no); if (j && j.janji === janji) pdfSedangDibuat.delete(no); };
+  janji.then(selesai, selesai);
+  return janji;
+}
+
+// Siapkan PDF di latar belakang (galat diabaikan; akan dicoba lagi saat tombol diklik)
+function siapkanPdfLatar(noNota) {
+  const no = String(noNota);
+  if (!currentUser || !store.idx.nota.get(no) || notaSementara(no) || sedangDisimpan(no)) return Promise.resolve();
+  try { if (navigator.connection && navigator.connection.saveData) return Promise.resolve(); } catch (err) { /* abaikan */ }
+  return ambilPdfNota(no, { latar: true }).catch(() => {});
 }
 
 // untuk pengujian otomatis
-window.__sinomer = { store, sinkronkan, terapkanDataServer };
+window.__sinomer = { store, sinkronkan, terapkanDataServer, cachePdfNota, pdfSedangDibuat };
 window.sinkronkan = sinkronkan;

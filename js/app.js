@@ -206,7 +206,7 @@ window.addEventListener('DOMContentLoaded', () => {
   restoreSession();
   if (isLoggedIn()) muatDataLokal(); // tampil seketika dari data tersimpan
   router();
-  if (isLoggedIn()) sinkronkan();    // lalu periksa data terbaru di latar belakang
+  if (isLoggedIn()) sinkronkan().then(() => jadwalkanPdfAntrean()); // lalu periksa data terbaru di latar belakang
 });
 
 function highlightActiveNav() {
@@ -239,6 +239,15 @@ function htmlGagalMuat() {
 // ------------------------------------------------------------
 // LOGIN
 // ------------------------------------------------------------
+// Server Apps Script "dibangunkan" & data awal disiapkan selagi pengguna mengetik
+// email dan kata sandi, sehingga saat tombol Masuk diklik jawabannya lebih cepat.
+let _terakhirPemanasan = 0;
+function pemanasanServer() {
+  if (Date.now() - _terakhirPemanasan < 240000) return;
+  _terakhirPemanasan = Date.now();
+  apiGet('siapkan', {}, { diam: true, timeout: 30000, jedaUlang: 0 }).catch(() => {});
+}
+
 function renderLogin() {
   root.innerHTML = `
   <div class="login-wrap">
@@ -264,6 +273,9 @@ function renderLogin() {
     </div>
   </div>`;
 
+  pemanasanServer();
+  ['loginEmail', 'loginPassword'].forEach(id => document.getElementById(id).addEventListener('focus', pemanasanServer));
+
   document.getElementById('loginForm').addEventListener('submit', async (e) => {
     e.preventDefault();
     const btn = document.getElementById('loginBtn');
@@ -276,6 +288,7 @@ function renderLogin() {
       if (boot && boot.data) {
         terapkanDataServer(boot.versi, boot.data); // data ikut terkirim saat login: dashboard langsung tampil
         store.terakhirSinkron = Date.now();
+        jadwalkanPdfAntrean();
       } else {
         muatDataLokal();
         sinkronkan();
@@ -837,8 +850,8 @@ function renderDetail(content, noNota) {
     <div><a href="#/nota-saya" style="font-size:12.5px;">← Kembali</a>
       <h2 class="section-title" style="margin:.2rem 0 0;">${sementara ? '⏳ Nomor nota sedang dibuat…' : n.NoNota}</h2></div>
     <div>${statusBadge(n.Status)}
-      <button class="btn btn-outline btn-sm" id="lihatPdfBtn" ${menyimpan ? 'disabled title="Tunggu hingga tersimpan di server"' : ''}>👁️ Lihat PDF</button>
-      <button class="btn btn-outline btn-sm" id="unduhPdfBtn" ${menyimpan ? 'disabled title="Tunggu hingga tersimpan di server"' : ''}>⬇️ Unduh PDF</button></div>
+      <button class="btn btn-outline btn-sm" id="lihatPdfBtn" ${sementara ? 'disabled title="Tunggu nomor nota selesai dibuat"' : ''}>👁️ Lihat PDF</button>
+      <button class="btn btn-outline btn-sm" id="unduhPdfBtn" ${sementara ? 'disabled title="Tunggu nomor nota selesai dibuat"' : ''}>⬇️ Unduh PDF</button></div>
   </div>
 
   ${menyimpan ? `<div class="info-banner info-simpan"><span class="loading-spin" style="width:14px;height:14px;vertical-align:-2px;"></span>
@@ -934,6 +947,8 @@ function renderDetail(content, noNota) {
 
   document.getElementById('lihatPdfBtn').addEventListener('click', () => lihatPdfNota(n.NoNota));
   document.getElementById('unduhPdfBtn').addEventListener('click', () => unduhPdfNota(n.NoNota));
+  // PDF disiapkan di latar belakang selagi pengguna membaca detail nota
+  if (!menyimpan && !sementara) jadwalkanSiapkanPdf(n.NoNota);
   document.getElementById('hapusNotaBtn')?.addEventListener('click', () => hapusNotaPemohon(encodeURIComponent(n.NoNota)));
 
   if (!menyimpan) attachDetailActionHandlers(n, items, res);
@@ -1442,13 +1457,72 @@ function base64ToBlobUrl(base64, mimeType) {
   return URL.createObjectURL(blob);
 }
 
-// Jendela PDF langsung terbuka (dengan tanda memuat), lalu PDF-nya menyusul.
-// PDF yang sudah pernah dibuka tampil seketika selama isi nota tidak berubah.
+// Nota yang menunggu tindakan pengguna ini (paling baru 3) — PDF-nya disiapkan
+// di latar belakang setelah masuk / data diperbarui, jadi saat dibuka langsung siap.
+function notaAntreanSaya() {
+  if (!currentUser) return [];
+  const role = currentUser.role;
+  let list = [];
+  if (role === 'Atasan Mengetahui') list = notaRelevanSaya().filter(n => n.Status === 'Diajukan');
+  else if (role === 'Perlengkapan') list = store.nota.filter(n => n.Status === 'Diketahui' || n.Status === 'Diproses');
+  else if (role === 'Atasan Menyetujui') list = store.nota.filter(n => n.Status === ST_DIPERIKSA);
+  else if (role === 'Pemohon') list = notaRelevanSaya().filter(n => n.Status === 'Diproses');
+  return urutkanTerbaru(list).slice(0, 3);
+}
+
+let _timerPdfAntrean = null;
+function jadwalkanPdfAntrean() {
+  clearTimeout(_timerPdfAntrean);
+  _timerPdfAntrean = setTimeout(async () => {
+    if (!currentUser || !store.siap) return;
+    // satu per satu, supaya server tidak dibanjiri permintaan bersamaan
+    for (const n of notaAntreanSaya()) {
+      if (!currentUser) return;
+      if (!pdfSiapSekarang(n.NoNota)) await siapkanPdfLatar(n.NoNota);
+    }
+  }, 1200);
+}
+
+// PDF mulai disiapkan sesaat setelah detail nota dibuka (bukan saat tombol diklik),
+// sehingga saat "Lihat PDF" / "Unduh PDF" ditekan biasanya sudah siap.
+let _timerPdfLatar = null;
+function jadwalkanSiapkanPdf(noNota) {
+  clearTimeout(_timerPdfLatar);
+  _timerPdfLatar = setTimeout(() => {
+    if (location.hash === '#/detail/' + encodeURIComponent(noNota)) siapkanPdfLatar(noNota);
+  }, 200);
+}
+
+// Perubahan pada nota masih dikirim ke server: tunggu sampai tersimpan,
+// lalu PDF (dengan QR terbaru) disiapkan otomatis.
+function tungguTersimpan(noNota) {
+  const pemilik = normTeks(currentUser && currentUser.email);
+  return new Promise((resolve, reject) => {
+    const mulai = Date.now();
+    const cek = () => {
+      if (!currentUser || normTeks(currentUser.email) !== pemilik) return reject(new Error('Sesi sudah berakhir.'));
+      if (!sedangDisimpan(noNota)) return resolve();
+      if (Date.now() - mulai > 130000) return reject(new Error('Penyimpanan ke server belum selesai. Coba lagi sebentar.'));
+      setTimeout(cek, 250);
+    };
+    cek();
+  });
+}
+function ambilPdfSetelahTersimpan(noNota) {
+  return sedangDisimpan(noNota) ? tungguTersimpan(noNota).then(() => ambilPdfNota(noNota)) : ambilPdfNota(noNota);
+}
+
+// Jendela PDF langsung terbuka. Bila PDF sudah siap, langsung tampil;
+// bila belum, tampil tanda memuat lalu PDF-nya menyusul.
 function lihatPdfNota(noNota) {
   document.getElementById('pdfModalBackdrop')?.remove();
   const wrap = document.createElement('div');
   wrap.className = 'modal-backdrop';
   wrap.id = 'pdfModalBackdrop';
+  const siap = !sedangDisimpan(noNota) && pdfSiapSekarang(noNota);
+  const keteranganTunggu = sedangDisimpan(noNota)
+    ? 'Menyimpan perubahan ke server…<br><span style="font-size:12px;">PDF dengan data terbaru tampil otomatis setelah tersimpan.</span>'
+    : 'Menyiapkan PDF…<br><span style="font-size:12px;">Sebentar lagi tampil. PDF yang sudah pernah dibuka berikutnya langsung tampil.</span>';
   wrap.innerHTML = `
     <div class="modal-box" style="max-width:920px;width:95vw;height:90vh;padding:0;display:flex;flex-direction:column;">
       <div class="flex-between" style="padding:.75rem 1rem;border-bottom:1px solid var(--border-subtle);flex-shrink:0;">
@@ -1457,36 +1531,53 @@ function lihatPdfNota(noNota) {
       </div>
       <div id="pdfIsi" style="flex:1;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:.75rem;">
         <span class="loading-spin" style="width:28px;height:28px;border-width:3px;"></span>
-        <div class="text-muted" style="font-size:13px;text-align:center;">Menyiapkan PDF…<br><span style="font-size:12px;">Pertama kali biasanya 3–8 detik, berikutnya langsung tampil.</span></div>
+        <div class="text-muted" style="font-size:13px;text-align:center;">${keteranganTunggu}</div>
       </div>
     </div>`;
   let blobUrl = null;
   const tutup = () => { if (blobUrl) URL.revokeObjectURL(blobUrl); wrap.remove(); };
+  const tampilkan = (pdf) => {
+    if (!document.body.contains(wrap)) return;
+    blobUrl = base64ToBlobUrl(pdf.base64, 'application/pdf');
+    wrap.querySelector('#pdfIsi').outerHTML = `<iframe src="${blobUrl}" style="flex:1;border:none;width:100%;"></iframe>`;
+  };
   wrap.addEventListener('click', (e) => { if (e.target === wrap) tutup(); });
   document.body.appendChild(wrap);
   document.getElementById('closePdfModalBtn').addEventListener('click', tutup);
 
-  ambilPdfNota(noNota).then(pdf => {
-    if (!document.body.contains(wrap)) return;
-    blobUrl = base64ToBlobUrl(pdf.base64, 'application/pdf');
-    wrap.querySelector('#pdfIsi').outerHTML = `<iframe src="${blobUrl}" style="flex:1;border:none;width:100%;"></iframe>`;
-  }).catch(err => {
+  if (siap) { tampilkan(siap); return; }
+  ambilPdfSetelahTersimpan(noNota).then(tampilkan).catch(err => {
     if (!document.body.contains(wrap)) return;
     wrap.querySelector('#pdfIsi').innerHTML = `<div style="font-size:28px;">⚠️</div><div style="text-align:center;padding:0 1rem;">PDF gagal dibuat: ${esc(err.message)}</div>`;
   });
 }
 
+function simpanBerkasPdf(pdf) {
+  const url = base64ToBlobUrl(pdf.base64, 'application/pdf');
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = pdf.filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 60000);
+}
+
+const _sedangDiunduh = new Set();
 function unduhPdfNota(noNota) {
+  const siap = !sedangDisimpan(noNota) && pdfSiapSekarang(noNota);
+  if (siap) { simpanBerkasPdf(siap); return; } // sudah siap: langsung terunduh
+  if (_sedangDiunduh.has(String(noNota))) return; // klik kedua selagi menyiapkan: cukup sekali unduh
+  _sedangDiunduh.add(String(noNota));
   const btn = document.getElementById('unduhPdfBtn');
   const teksAsli = btn ? btn.textContent : '';
-  if (btn) { btn.disabled = true; btn.textContent = 'Menyiapkan...'; }
-  ambilPdfNota(noNota).then(pdf => {
-    const link = document.createElement('a');
-    link.href = 'data:application/pdf;base64,' + pdf.base64;
-    link.download = pdf.filename;
-    link.click();
-  }).catch(err => showToast('PDF gagal dibuat: ' + err.message, 'error', 6000))
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Menyiapkan...'; }
+  const pemilik = normTeks(currentUser && currentUser.email);
+  ambilPdfSetelahTersimpan(noNota)
+    .then(pdf => { if (currentUser && normTeks(currentUser.email) === pemilik) simpanBerkasPdf(pdf); })
+    .catch(err => { if (currentUser) showToast('PDF gagal dibuat: ' + err.message, 'error', 6000); })
     .finally(() => {
+      _sedangDiunduh.delete(String(noNota));
       const b = document.getElementById('unduhPdfBtn');
       if (b) { b.disabled = false; b.textContent = teksAsli || '⬇️ Unduh PDF'; }
     });

@@ -3,7 +3,7 @@
    Berdasarkan DESIGN.md (Corporate/Modern, royal blue institutional)
    ============================================================ */
 
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+/* Font Inter dimuat dari index.html (tidak menahan tampilan pertama) */
 
 :root {
   --surface-canvas: #F8FAFC;
